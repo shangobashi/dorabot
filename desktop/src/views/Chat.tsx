@@ -808,17 +808,17 @@ export function ChatView({ gateway, chatItems, agentStatus, pendingQuestion, ses
                   onChange={e => { if (e.target.files) addImagesFromFiles(e.target.files); e.target.value = ''; }}
                 />
                 <div className="flex items-center px-3 pb-3">
-                  <ModelSelector gateway={gateway} disabled={!connected} />
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-8 w-8 p-0 rounded-lg ml-1"
+                    className="h-8 w-8 p-0 rounded-lg mr-1"
                     onClick={() => fileInputRef.current?.click()}
                     disabled={!isReady}
                     title="Attach image"
                   >
                     <Paperclip className="w-4 h-4 text-muted-foreground" />
                   </Button>
+                  <ModelSelector gateway={gateway} disabled={!connected} />
                   <span className="flex-1" />
                   <Button
                     size="sm"
@@ -931,17 +931,17 @@ export function ChatView({ gateway, chatItems, agentStatus, pendingQuestion, ses
             onChange={e => { if (e.target.files) addImagesFromFiles(e.target.files); e.target.value = ''; }}
           />
           <div className="flex items-center px-3 pb-3">
-            <ModelSelector gateway={gateway} disabled={!connected} />
             <Button
               variant="ghost"
               size="sm"
-              className="h-8 w-8 p-0 rounded-lg ml-1"
+              className="h-8 w-8 p-0 rounded-lg mr-1"
               onClick={() => fileInputRef.current?.click()}
               disabled={!connected}
               title="Attach image"
             >
               <Paperclip className="w-4 h-4 text-muted-foreground" />
             </Button>
+            <ModelSelector gateway={gateway} disabled={!connected} />
             <span className="flex-1" />
             {isRunning ? (
               <Button
