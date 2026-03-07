@@ -793,6 +793,8 @@ export function ChatView({ gateway, chatItems, agentStatus, pendingQuestion, ses
     }
   };
 
+  const toolActions = useMemo(() => ({ onOpenFile, onOpenDiff }), [onOpenFile, onOpenDiff]);
+
   const connected = gateway.connectionState === 'connected';
   const authenticated = gateway.providerInfo?.auth?.authenticated ?? true; // assume true until loaded
   const isReady = connected && authenticated;
@@ -907,8 +909,6 @@ export function ChatView({ gateway, chatItems, agentStatus, pendingQuestion, ses
       </div>
     );
   }
-
-  const toolActions = useMemo(() => ({ onOpenFile, onOpenDiff }), [onOpenFile, onOpenDiff]);
 
   // conversation view — messages + bottom input
   return (
