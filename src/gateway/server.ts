@@ -4900,7 +4900,17 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
                 cwd: resolved, encoding: 'utf-8', timeout: 3000,
               }).trim();
             } catch { /* detached HEAD */ }
-            return { id, result: { root: resolved, branch, files } };
+            // Ahead/behind upstream
+            let ahead = 0, behind = 0;
+            try {
+              const revList = execFileSync('git', ['rev-list', '--count', '--left-right', 'HEAD...@{upstream}'], {
+                cwd: resolved, encoding: 'utf-8', timeout: 3000,
+              }).trim();
+              const parts = revList.split('\t');
+              ahead = parseInt(parts[0], 10) || 0;
+              behind = parseInt(parts[1], 10) || 0;
+            } catch { /* no upstream configured */ }
+            return { id, result: { root: resolved, branch, files, ahead, behind } };
           } catch (err) {
             return { id, error: err instanceof Error ? err.message : String(err) };
           }

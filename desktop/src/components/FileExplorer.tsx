@@ -27,6 +27,8 @@ type GitState = {
   root: string;
   branch: string;
   files: GitFileStatus[];
+  ahead: number;
+  behind: number;
 };
 
 type GitBranchInfo = {
@@ -376,11 +378,18 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh }: {
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="sm" className="h-5 w-5 p-0" onClick={handlePull} disabled={pulling}>
+            <Button variant="ghost" size="sm" className="h-5 w-5 p-0 relative" onClick={handlePull} disabled={pulling}>
               <ArrowDownToLine className={cn('w-3 h-3', pulling && 'animate-pulse')} />
+              {gitState.behind > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 min-w-[12px] h-3 px-0.5 rounded-full bg-primary text-[8px] font-bold text-primary-foreground flex items-center justify-center">
+                  {gitState.behind}
+                </span>
+              )}
             </Button>
           </TooltipTrigger>
-          <TooltipContent side="bottom" className="text-[10px]">Pull</TooltipContent>
+          <TooltipContent side="bottom" className="text-[10px]">
+            {gitState.behind > 0 ? `Pull (${gitState.behind} behind)` : 'Pull'}
+          </TooltipContent>
         </Tooltip>
       </div>
 
@@ -392,6 +401,12 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh }: {
         >
           <GitBranch className="w-3 h-3 shrink-0 text-primary" />
           <span className="truncate">{gitState.branch || 'HEAD (detached)'}</span>
+          {(gitState.ahead > 0 || gitState.behind > 0) && (
+            <span className="flex items-center gap-1 text-[10px] text-muted-foreground font-normal shrink-0">
+              {gitState.ahead > 0 && <span title={`${gitState.ahead} ahead of upstream`}>↑{gitState.ahead}</span>}
+              {gitState.behind > 0 && <span title={`${gitState.behind} behind upstream`}>↓{gitState.behind}</span>}
+            </span>
+          )}
           <ChevronDown className="w-3 h-3 shrink-0 ml-auto text-muted-foreground" />
         </button>
       </div>
