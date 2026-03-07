@@ -82,8 +82,9 @@ const SECONDARY_NAV_ITEMS: { id: TabType; label: string; icon: React.ReactNode }
 const ALL_NAV_ITEMS = [...PRIMARY_NAV_ITEMS, ...SECONDARY_NAV_ITEMS];
 
 export default function App() {
-  const [showFiles, setShowFiles] = useState(false);
-  const [sidebarView, setSidebarView] = useState<'files' | 'git'>('files');
+  const [showFiles, setShowFiles] = useState(() => localStorage.getItem('dorabot:showFiles') === 'true');
+  const [sidebarView, setSidebarView] = useState<'files' | 'git'>(() => (localStorage.getItem('dorabot:sidebarView') as 'files' | 'git') || 'files');
+  const filesPanelSize = useRef(localStorage.getItem('dorabot:filesPanelSize') || '30%');
   const fileExplorerStateRef = useRef<{ viewRoot: string; expanded: string[]; selectedPath: string | null }>({ viewRoot: '', expanded: [], selectedPath: null });
   const [sessionFilter, setSessionFilter] = useState<SessionFilter>('all');
   const [selectedChannel, setSelectedChannel] = useState<'whatsapp' | 'telegram'>('whatsapp');
@@ -142,17 +143,9 @@ export default function App() {
     return cleanup;
   }, []);
 
-  // keep dense side panes collapsed on smaller windows
-  useEffect(() => {
-    const onResize = () => {
-      if (window.innerWidth < 1200) {
-        setShowFiles(false);
-      }
-    };
-    onResize();
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
+  // Persist sidebar state
+  useEffect(() => { localStorage.setItem('dorabot:showFiles', String(showFiles)); }, [showFiles]);
+  useEffect(() => { localStorage.setItem('dorabot:sidebarView', sidebarView); }, [sidebarView]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -1008,7 +1001,7 @@ export default function App() {
         {showFiles && (
           <>
             <ResizableHandle withHandle />
-            <ResizablePanel defaultSize="30%" minSize="15%" maxSize="45%" className="overflow-hidden flex flex-col">
+            <ResizablePanel defaultSize={filesPanelSize.current} minSize="15%" maxSize="45%" className="overflow-hidden flex flex-col" onResize={(size) => { const s = typeof size === 'object' ? `${size.asPercentage}%` : `${size}%`; filesPanelSize.current = s; localStorage.setItem('dorabot:filesPanelSize', s); }}>
               <div className="flex items-center border-b border-border px-1.5 py-1.5 gap-0.5 shrink-0">
                 <Tooltip>
                   <TooltipTrigger asChild>
