@@ -2,7 +2,8 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'node:http';
 import { readdirSync, statSync, readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, renameSync, chmodSync, unlinkSync, watch, type FSWatcher } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
-import { execSync, spawn as spawnProcess, type ChildProcess } from 'node:child_process';
+import { execSync } from 'node:child_process';
+import * as nodePty from 'node-pty';
 import { resolve as pathResolve, join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { createConnection } from 'node:net';
@@ -432,7 +433,8 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
   };
   const fileWatchers = new Map<string, FileWatchEntry>();
   const watchedPathsByClient = new Map<WebSocket, Set<string>>();
-  const shellProcesses = new Map<string, ChildProcess>();
+  const shellProcesses = new Map<string, nodePty.IPty>();
+  const shellsByClient = new Map<WebSocket, Set<string>>();
   const FS_WATCH_DEBOUNCE_MS = 250;
   const DEBUG_FS_WATCH = process.env.DORABOT_DEBUG_FS_WATCH === '1';
 
@@ -4886,7 +4888,7 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
                 const wt = entry[1];   // worktree status
                 const filePath = entry.substring(3);
                 if (ix === '?' && wt === '?') {
-                  files.push({ path: filePath, status: 'A', staged: false });
+                    files.push({ path: filePath, status: '?', staged: false });
                 } else {
                   if (ix !== ' ' && ix !== '?') {
                     files.push({ path: filePath, status: ix, staged: true });
@@ -4896,7 +4898,7 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
                   }
                 }
                 // Renames/copies have a second path entry (the original path)
-                if (ix === 'R' || ix === 'C') i++;
+                if (ix === 'R' || ix === 'C' || wt === 'R' || wt === 'C') i++;
                 i++;
               }
             }
@@ -5190,30 +5192,31 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           const shell = process.env.SHELL || '/bin/zsh';
           const cwd = (params?.cwd as string) || config.cwd || homedir();
 
-          const proc = spawnProcess(shell, ['-l'], {
+          const pty = nodePty.spawn(shell, ['-l'], {
+            name: 'xterm-256color',
+            cols,
+            rows,
             cwd,
             env: {
               ...process.env,
               TERM: 'xterm-256color',
               COLORTERM: 'truecolor',
-              FORCE_COLOR: '1',
-              COLUMNS: String(cols),
-              LINES: String(rows),
-            },
-            stdio: ['pipe', 'pipe', 'pipe'],
+            } as Record<string, string>,
           });
 
-          shellProcesses.set(shellId, proc);
+          shellProcesses.set(shellId, pty);
+          if (clientWs) {
+            if (!shellsByClient.has(clientWs)) shellsByClient.set(clientWs, new Set());
+            shellsByClient.get(clientWs)!.add(shellId);
+          }
 
-          const sendToClient = (data: string) => {
+          pty.onData((data) => {
             broadcast({ event: 'shell.data', data: { shellId, type: 'data', data } });
-          };
-
-          proc.stdout?.on('data', (chunk: Buffer) => sendToClient(chunk.toString()));
-          proc.stderr?.on('data', (chunk: Buffer) => sendToClient(chunk.toString()));
-          proc.on('exit', (code) => {
+          });
+          pty.onExit(({ exitCode }) => {
             shellProcesses.delete(shellId);
-            broadcast({ event: 'shell.data', data: { shellId, type: 'exit', code } });
+            if (clientWs) shellsByClient.get(clientWs)?.delete(shellId);
+            broadcast({ event: 'shell.data', data: { shellId, type: 'exit', code: exitCode } });
           });
 
           return { id, result: { spawned: true } };
@@ -5223,9 +5226,9 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           const shellId = params?.shellId as string;
           const data = params?.data as string;
           if (!shellId || data == null) return { id, error: 'shellId and data required' };
-          const proc = shellProcesses.get(shellId);
-          if (!proc?.stdin?.writable) return { id, error: 'shell not found or not writable' };
-          proc.stdin.write(data);
+          const pty = shellProcesses.get(shellId);
+          if (!pty) return { id, error: 'shell not found' };
+          pty.write(data);
           return { id, result: { written: true } };
         }
 
@@ -5233,18 +5236,19 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           const shellId = params?.shellId as string;
           const cols = params?.cols as number;
           const rows = params?.rows as number;
-          if (!shellId) return { id, error: 'shellId required' };
-          // Without a PTY, we can't truly resize, but we store the dimensions
-          // and send SIGWINCH-like info if the process supports it
+          if (!shellId || cols == null || rows == null) return { id, error: 'shellId, cols, and rows required' };
+          const pty = shellProcesses.get(shellId);
+          if (!pty) return { id, error: 'shell not found' };
+          pty.resize(cols, rows);
           return { id, result: { resized: true } };
         }
 
         case 'shell.kill': {
           const shellId = params?.shellId as string;
           if (!shellId) return { id, error: 'shellId required' };
-          const proc = shellProcesses.get(shellId);
-          if (proc) {
-            proc.kill('SIGTERM');
+          const pty = shellProcesses.get(shellId);
+          if (pty) {
+            pty.kill();
             shellProcesses.delete(shellId);
           }
           return { id, result: { killed: true } };
@@ -5563,6 +5567,7 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
       disconnectReason: null,
     });
     watchedPathsByClient.set(ws, new Set());
+    shellsByClient.set(ws, new Set());
     console.log(`[gateway] client connected (${clients.size} total) connect_id=${connectId}`);
 
     // auth timeout
@@ -5652,12 +5657,23 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
       watchedPathsByClient.delete(ws);
     };
 
+    const releaseClientShells = () => {
+      const shells = shellsByClient.get(ws);
+      if (!shells) return;
+      for (const shellId of shells) {
+        const pty = shellProcesses.get(shellId);
+        if (pty) { pty.kill(); shellProcesses.delete(shellId); }
+      }
+      shellsByClient.delete(ws);
+    };
+
     let finalized = false;
     const finalizeClient = (disconnectReason: string) => {
       if (finalized) return;
       finalized = true;
       clearTimeout(authTimeout);
       releaseClientWatches();
+      releaseClientShells();
       const batch = streamBatches.get(ws);
       if (batch?.timer) clearTimeout(batch.timer);
       streamBatches.delete(ws);
@@ -5743,6 +5759,11 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
       }
       fileWatchers.clear();
       watchedPathsByClient.clear();
+
+      // Kill all PTY processes
+      for (const [, pty] of shellProcesses) { try { pty.kill(); } catch { /* ignore */ } }
+      shellProcesses.clear();
+      shellsByClient.clear();
 
       for (const [ws] of clients) {
         ws.close();
