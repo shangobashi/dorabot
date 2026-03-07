@@ -3,47 +3,19 @@ import Editor, { loader, type OnMount } from '@monaco-editor/react';
 import type { editor as monacoEditor } from 'monaco-editor';
 import { useTheme } from '../../hooks/useTheme';
 
-// Configure Monaco workers for Vite (avoids console warnings)
+// Use bundled monaco-editor directly (no CDN, works offline in Electron)
+import * as monaco from 'monaco-editor';
+import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
+
+// Set up the base editor worker. Language-specific workers (TS, JSON, CSS, HTML)
+// are not needed since we disable IntelliSense features (quickSuggestions, hover, etc.)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 (self as any).MonacoEnvironment = {
-  getWorker(_moduleId: string, label: string) {
-    switch (label) {
-      case 'json':
-        return new Worker(
-          new URL('monaco-editor/esm/vs/language/json/json.worker', import.meta.url),
-          { type: 'module' }
-        );
-      case 'css':
-      case 'scss':
-      case 'less':
-        return new Worker(
-          new URL('monaco-editor/esm/vs/language/css/css.worker', import.meta.url),
-          { type: 'module' }
-        );
-      case 'html':
-      case 'handlebars':
-      case 'razor':
-        return new Worker(
-          new URL('monaco-editor/esm/vs/language/html/html.worker', import.meta.url),
-          { type: 'module' }
-        );
-      case 'typescript':
-      case 'javascript':
-        return new Worker(
-          new URL('monaco-editor/esm/vs/language/typescript/ts.worker', import.meta.url),
-          { type: 'module' }
-        );
-      default:
-        return new Worker(
-          new URL('monaco-editor/esm/vs/editor/editor.worker', import.meta.url),
-          { type: 'module' }
-        );
-    }
+  getWorker() {
+    return new editorWorker();
   },
 };
 
-// Use bundled monaco-editor directly (no CDN, works offline in Electron)
-import * as monaco from 'monaco-editor';
 loader.config({ monaco });
 
 const EXT_TO_LANG: Record<string, string> = {
