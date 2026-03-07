@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { CodeViewer } from './viewers/CodeViewer';
 import { CodeEditor } from './viewers/CodeEditor';
 import { MarkdownViewer } from './viewers/MarkdownViewer';
@@ -100,25 +100,27 @@ export function FileViewer({ filePath, rpc, onClose, headerless, onDirtyChange }
   }, [onDirtyChange]);
 
   // File watcher: reload content when file changes externally
+  const dirtyRef = useRef(dirty);
+  const editingRef = useRef(editing);
+  dirtyRef.current = dirty;
+  editingRef.current = editing;
+
   useEffect(() => {
-    // Listen for file change events from the gateway
-    // We'll poll for changes by checking mtime
     let cancelled = false;
     let lastMtime = 0;
 
     const checkForChanges = async () => {
-      if (cancelled || dirty || editing) return; // don't overwrite edits
+      if (cancelled || dirtyRef.current || editingRef.current) return;
       try {
         const res = await rpc('fs.stat', { path: filePath }) as { mtime?: number } | null;
         if (cancelled) return;
         if (res?.mtime && lastMtime > 0 && res.mtime > lastMtime) {
-          setVersion(v => v + 1); // triggers reload
+          setVersion(v => v + 1);
         }
         if (res?.mtime) lastMtime = res.mtime;
       } catch { /* ignore */ }
     };
 
-    // Initial mtime capture
     checkForChanges();
     const interval = setInterval(checkForChanges, 2000);
 
@@ -126,7 +128,7 @@ export function FileViewer({ filePath, rpc, onClose, headerless, onDirtyChange }
       cancelled = true;
       clearInterval(interval);
     };
-  }, [filePath, rpc, dirty, editing]);
+  }, [filePath, rpc]);
 
   const renderViewer = () => {
     if (loading) {

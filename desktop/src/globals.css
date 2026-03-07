@@ -235,7 +235,7 @@
 /* thinking container */
 .thinking-container {
   position: relative;
-  border-left: 2px solid hsl(var(--muted-foreground) / 0.15);
+  border-left: 2px solid color-mix(in oklch, var(--muted-foreground) 15%, transparent);
   padding-left: 12px;
 }
 .thinking-body {

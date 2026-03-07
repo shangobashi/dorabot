@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo, useCallback, type KeyboardEvent, type ClipboardEvent, type DragEvent } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback, createContext, useContext, type KeyboardEvent, type ClipboardEvent, type DragEvent } from 'react';
 import { DorabotSprite } from '../components/DorabotSprite';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -23,7 +23,7 @@ import {
   Globe, Search, Bot, MessageCircle, ListChecks, FileCode,
   MessageSquare, Camera, Monitor, Clock, Wrench, ArrowUp, LayoutGrid,
   Smile, Image, Brain, MapPin, PenLine, GitPullRequest, Radio,
-  Paperclip, X,
+  Paperclip, X, ExternalLink,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -34,7 +34,16 @@ type Props = {
   pendingQuestion: AskUserQuestion | null;
   sessionKey?: string;
   onNavigateSettings?: () => void;
+  onOpenFile?: (filePath: string) => void;
+  onOpenDiff?: (opts: { filePath: string; oldContent: string; newContent: string; label?: string }) => void;
 };
+
+type ToolActions = {
+  onOpenFile?: (filePath: string) => void;
+  onOpenDiff?: (opts: { filePath: string; oldContent: string; newContent: string; label?: string }) => void;
+};
+
+const ToolActionsContext = createContext<ToolActions>({});
 
 const TOOL_TEXT: Record<string, { pending: string; done: string }> = {
   Read: { pending: 'Reading file', done: 'Read file' },
@@ -245,6 +254,7 @@ function ThinkingItem({ item }: { item: Extract<ChatItem, { type: 'thinking' }> 
 
 function ToolUseItem({ item }: { item: Extract<ChatItem, { type: 'tool_use' }> }) {
   const [manualOpen, setManualOpen] = useState<boolean | null>(null);
+  const { onOpenFile, onOpenDiff } = useContext(ToolActionsContext);
   const hasOutput = item.output != null;
   const isPending = item.streaming || !hasOutput;
   const displayName = toolText(item.name, isPending ? 'pending' : 'done');
@@ -254,11 +264,22 @@ function ToolUseItem({ item }: { item: Extract<ChatItem, { type: 'tool_use' }> }
   const startCollapsed = item.name === 'Read' || item.name === 'Grep' || item.name === 'Glob' || item.name === 'AskUserQuestion';
   const isOpen = manualOpen !== null ? manualOpen : (isPending && !startCollapsed);
 
+  const parsed = safeParse(item.input);
   const inputDetail = (() => {
-    const p = safeParse(item.input);
     if (item.name === 'AskUserQuestion' && item.output) return item.output;
-    return p.command?.split('\n')[0] || p.file_path || p.pattern || p.url || p.query || p.description || '';
+    return parsed.command?.split('\n')[0] || parsed.file_path || parsed.pattern || parsed.url || parsed.query || parsed.description || '';
   })();
+
+  const canOpenInTab = !isPending && !item.is_error &&
+    (item.name === 'Edit' || item.name === 'Write') &&
+    onOpenFile && parsed.file_path;
+
+  const handleOpenInTab = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (onOpenFile && parsed.file_path) {
+      onOpenFile(parsed.file_path);
+    }
+  };
 
   // screenshot: show image inline after collapse
   const isScreenshot = item.name === 'screenshot';
@@ -272,28 +293,50 @@ function ToolUseItem({ item }: { item: Extract<ChatItem, { type: 'tool_use' }> }
         <Collapsible open={isOpen} onOpenChange={v => setManualOpen(v)}>
           {/* collapsed header — only visible when collapsed */}
           {!isOpen && (
-            <CollapsibleTrigger className="flex items-center gap-2 w-full px-3 py-1.5 text-xs hover:bg-secondary/50 transition-colors rounded-md border border-border/40">
-              {(() => {
-                const Icon = TOOL_ICONS[item.name] || Wrench;
-                return <Icon className={item.is_error ? 'w-3 h-3 text-destructive' : 'w-3 h-3 text-muted-foreground'} />;
-              })()}
-              <span className="text-muted-foreground font-medium">{displayName}</span>
-              <span className="text-muted-foreground/60 flex-1 truncate text-left text-[11px]">{inputDetail}</span>
-              <ChevronRight className="w-3 h-3 text-muted-foreground shrink-0" />
-            </CollapsibleTrigger>
+            <div className="flex items-center gap-0">
+              <CollapsibleTrigger className="flex items-center gap-2 flex-1 min-w-0 px-3 py-1.5 text-xs hover:bg-secondary/50 transition-colors rounded-md border border-border/40">
+                {(() => {
+                  const Icon = TOOL_ICONS[item.name] || Wrench;
+                  return <Icon className={item.is_error ? 'w-3 h-3 text-destructive' : 'w-3 h-3 text-muted-foreground'} />;
+                })()}
+                <span className="text-muted-foreground font-medium">{displayName}</span>
+                <span className="text-muted-foreground/60 flex-1 truncate text-left text-[11px]">{inputDetail}</span>
+                {!canOpenInTab && <ChevronRight className="w-3 h-3 text-muted-foreground shrink-0" />}
+              </CollapsibleTrigger>
+              {canOpenInTab && (
+                <button
+                  className="ml-1 p-1.5 rounded-md border border-border/40 text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors shrink-0"
+                  onClick={handleOpenInTab}
+                  title="Open file in tab"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                </button>
+              )}
+            </div>
           )}
           <CollapsibleContent forceMount={isOpen ? true : undefined}>
             {isOpen && (
               <div className="relative">
-                {/* clickable overlay to collapse when done */}
+                {/* action buttons when done */}
                 {!isPending && (
-                  <button
-                    className="absolute top-1 right-1 z-10 p-0.5 rounded bg-background/80 hover:bg-secondary text-muted-foreground"
-                    onClick={() => setManualOpen(false)}
-                    title="collapse"
-                  >
-                    <ChevronDown className="w-3 h-3" />
-                  </button>
+                  <div className="absolute top-1 right-1 z-10 flex items-center gap-0.5">
+                    {canOpenInTab && (
+                      <button
+                        className="p-0.5 rounded bg-background/80 hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+                        onClick={handleOpenInTab}
+                        title="Open file in tab"
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                      </button>
+                    )}
+                    <button
+                      className="p-0.5 rounded bg-background/80 hover:bg-secondary text-muted-foreground"
+                      onClick={() => setManualOpen(false)}
+                      title="collapse"
+                    >
+                      <ChevronDown className="w-3 h-3" />
+                    </button>
+                  </div>
                 )}
                 <ToolStreamCard
                   name={item.name}
@@ -566,7 +609,7 @@ function getGreeting(): string {
   return 'good evening';
 }
 
-export function ChatView({ gateway, chatItems, agentStatus, pendingQuestion, sessionKey, onNavigateSettings }: Props) {
+export function ChatView({ gateway, chatItems, agentStatus, pendingQuestion, sessionKey, onNavigateSettings, onOpenFile, onOpenDiff }: Props) {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [attachedImages, setAttachedImages] = useState<ImageAttachment[]>([]);
@@ -865,8 +908,11 @@ export function ChatView({ gateway, chatItems, agentStatus, pendingQuestion, ses
     );
   }
 
+  const toolActions = useMemo(() => ({ onOpenFile, onOpenDiff }), [onOpenFile, onOpenDiff]);
+
   // conversation view — messages + bottom input
   return (
+    <ToolActionsContext.Provider value={toolActions}>
     <div className="flex flex-col h-full min-h-0 min-w-0">
       {/* messages */}
       <VirtualChatList
@@ -966,5 +1012,6 @@ export function ChatView({ gateway, chatItems, agentStatus, pendingQuestion, ses
         </Card>
       </div>
     </div>
+    </ToolActionsContext.Provider>
   );
 }

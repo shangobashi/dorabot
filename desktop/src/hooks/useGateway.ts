@@ -781,10 +781,12 @@ export function useGateway() {
             }
             return it;
           });
-          updated.push({ type: 'result', cost: d.usage?.totalCostUsd, timestamp: Date.now() });
+          // Remove compacting indicator and add result
+          const cleaned = updated.filter(i => i.type !== 'compacting');
+          cleaned.push({ type: 'result', cost: d.usage?.totalCostUsd, timestamp: Date.now() });
           return {
             ...prev,
-            [sk]: { ...state, chatItems: updated, agentStatus: 'idle', pendingQuestion: null, sessionId: d.sessionId || state.sessionId },
+            [sk]: { ...state, chatItems: cleaned, agentStatus: 'idle', pendingQuestion: null, sessionId: d.sessionId || state.sessionId },
           };
         });
         // Notify tab system of sessionId assignment
@@ -802,11 +804,12 @@ export function useGateway() {
         setSessionStates(prev => {
           const state = prev[sk];
           if (!state) return prev;
+          const cleaned = state.chatItems.filter(i => i.type !== 'compacting');
           return {
             ...prev,
             [sk]: {
               ...state,
-              chatItems: [...state.chatItems, { type: 'error', content: d.error, timestamp: Date.now() }],
+              chatItems: [...cleaned, { type: 'error', content: d.error, timestamp: Date.now() }],
               agentStatus: 'idle',
               pendingQuestion: null,
             },
@@ -1161,7 +1164,8 @@ export function useGateway() {
             if (!state) return prev;
             const newStatus = d.activeRun ? `running (${d.source || 'agent'})` : 'idle';
             if (state.agentStatus === newStatus && !(newStatus === 'idle' && state.pendingQuestion)) return prev;
-            return { ...prev, [sk]: { ...state, agentStatus: newStatus, ...(newStatus === 'idle' ? { pendingQuestion: null } : {}) } };
+            const items = newStatus === 'idle' ? state.chatItems.filter(i => i.type !== 'compacting') : state.chatItems;
+            return { ...prev, [sk]: { ...state, chatItems: items, agentStatus: newStatus, ...(newStatus === 'idle' ? { pendingQuestion: null } : {}) } };
           });
         }
         break;
@@ -1461,11 +1465,12 @@ export function useGateway() {
       setSessionStates(prev => {
         const state = prev[sk];
         if (!state) return prev;
+        const cleaned = state.chatItems.filter(i => i.type !== 'compacting');
         return {
           ...prev,
           [sk]: {
             ...state,
-            chatItems: [...state.chatItems, { type: 'error', content: err instanceof Error ? err.message : String(err), timestamp: Date.now() }],
+            chatItems: [...cleaned, { type: 'error', content: err instanceof Error ? err.message : String(err), timestamp: Date.now() }],
             agentStatus: 'idle',
           },
         };

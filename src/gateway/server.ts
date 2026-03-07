@@ -4834,6 +4834,9 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           const detectPath = params?.path as string;
           if (!detectPath) return { id, error: 'path required' };
           let dir = resolve(detectPath);
+          if (!isPathAllowed(dir, config)) {
+            return { id, error: `path not allowed: ${dir}` };
+          }
           while (dir !== '/' && dir !== '.') {
             try {
               const gitDir = join(dir, '.git');
@@ -4864,11 +4867,16 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
                 const index = line[0];  // staged status
                 const wt = line[1];     // working tree status
                 const filePath = line.slice(3);
+                // Untracked files (??) only show as unstaged 'A'
+                if (index === '?' && wt === '?') {
+                  files.push({ path: filePath, status: 'A', staged: false });
+                  continue;
+                }
                 if (index && index !== ' ' && index !== '?') {
                   files.push({ path: filePath, status: index, staged: true });
                 }
-                if (wt && wt !== ' ') {
-                  files.push({ path: filePath, status: wt === '?' ? 'A' : wt, staged: false });
+                if (wt && wt !== ' ' && wt !== '?') {
+                  files.push({ path: filePath, status: wt, staged: false });
                 }
               }
             }
@@ -4960,7 +4968,11 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           const filePath = params?.file as string;
           const ref = (params?.ref as string) || 'HEAD';
           if (!repoRoot || !filePath) return { id, error: 'path and file required' };
+          // Validate ref is safe (alphanumeric, /, -, _, ~, ^, .)
+          if (!/^[a-zA-Z0-9/_\-.~^]+$/.test(ref)) return { id, error: 'invalid ref' };
           const resolved = resolve(repoRoot);
+          // Validate file path stays within repo
+          if (!pathResolve(resolved, filePath).startsWith(resolved)) return { id, error: 'path traversal not allowed' };
           try {
             const { execFileSync } = await import('node:child_process');
             const content = execFileSync('git', ['show', `${ref}:${filePath}`], {
@@ -4978,6 +4990,7 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           const filePath = params?.file as string;
           if (!repoRoot || !filePath) return { id, error: 'path and file required' };
           const resolved = resolve(repoRoot);
+          if (!pathResolve(resolved, filePath).startsWith(resolved)) return { id, error: 'path traversal not allowed' };
           try {
             const { execFileSync } = await import('node:child_process');
             execFileSync('git', ['add', filePath], {
@@ -4994,6 +5007,7 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           const filePath = params?.file as string;
           if (!repoRoot || !filePath) return { id, error: 'path and file required' };
           const resolved = resolve(repoRoot);
+          if (!pathResolve(resolved, filePath).startsWith(resolved)) return { id, error: 'path traversal not allowed' };
           try {
             const { execFileSync } = await import('node:child_process');
             execFileSync('git', ['restore', '--staged', filePath], {
@@ -5023,7 +5037,8 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
 
         case 'git.log': {
           const repoRoot = params?.path as string;
-          const count = (params?.count as number) || 20;
+          const rawCount = Number(params?.count) || 20;
+          const count = Math.max(1, Math.min(200, Math.floor(rawCount)));
           if (!repoRoot) return { id, error: 'path required' };
           const resolved = resolve(repoRoot);
           try {
@@ -5048,6 +5063,7 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           const staged = params?.staged as boolean;
           if (!repoRoot || !filePath) return { id, error: 'path and file required' };
           const resolved = resolve(repoRoot);
+          if (!pathResolve(resolved, filePath).startsWith(resolved)) return { id, error: 'path traversal not allowed' };
           try {
             const { execFileSync } = await import('node:child_process');
             const args = staged ? ['diff', '--cached', '--', filePath] : ['diff', '--', filePath];

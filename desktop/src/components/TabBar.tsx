@@ -106,32 +106,26 @@ function DraggableTab({
         </span>
       )}
       {tab.closable && (
-        isDirty ? (
-          <span
-            className={cn(
-              'shrink-0 w-3 h-3 flex items-center justify-center group-hover:hidden',
-            )}
-          >
-            <span className="w-2 h-2 rounded-full bg-warning" />
-          </span>
-        ) : null
-      )}
-      {tab.closable && (
         <button
           className={cn(
             'shrink-0 rounded p-0.5 transition-all',
-            isDirty
-              ? 'hidden group-hover:block opacity-50 hover:opacity-100 hover:bg-secondary'
-              : isActive
-                ? 'opacity-50 hover:opacity-100 hover:bg-secondary'
-                : 'opacity-0 group-hover:opacity-50 hover:!opacity-100 hover:bg-secondary',
+            isActive
+              ? 'opacity-50 hover:opacity-100 hover:bg-secondary'
+              : 'opacity-0 group-hover:opacity-50 hover:!opacity-100 hover:bg-secondary',
           )}
           onClick={e => {
             e.stopPropagation();
             onCloseTab(tab.id);
           }}
+          aria-label={`Close ${tab.label}`}
         >
-          <X className="w-3 h-3" />
+          {isDirty ? (
+            <span className="w-3 h-3 flex items-center justify-center">
+              <span className="w-2 h-2 rounded-full bg-warning" />
+            </span>
+          ) : (
+            <X className="w-3 h-3" />
+          )}
         </button>
       )}
     </div>

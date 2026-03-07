@@ -32,18 +32,6 @@ export function CodeEditor({ content, filePath, onSave, onDirtyChange }: Props) 
     onDirtyChange?.(isDirty);
   }, [value, content, onDirtyChange]);
 
-  // Cmd+S handler
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
-        e.preventDefault();
-        handleSave();
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  });
-
   const handleSave = useCallback(async () => {
     if (!dirty || saving) return;
     setSaving(true);
@@ -58,6 +46,18 @@ export function CodeEditor({ content, filePath, onSave, onDirtyChange }: Props) 
       setSaving(false);
     }
   }, [dirty, saving, value, onSave]);
+
+  // Cmd+S handler
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+        e.preventDefault();
+        handleSave();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [handleSave]);
 
   // Sync scroll between textarea and line numbers
   const handleScroll = useCallback(() => {

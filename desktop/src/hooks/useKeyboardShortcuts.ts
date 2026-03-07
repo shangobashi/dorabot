@@ -46,15 +46,18 @@ export function useKeyboardShortcuts(actions: ShortcutActions, options: Shortcut
         return;
       }
 
-      // Cmd+T — new tab
-      if (e.key === 't' && !e.shiftKey) {
+      const tag = (e.target as HTMLElement)?.tagName;
+      const inInput = tag === 'INPUT' || tag === 'TEXTAREA';
+
+      // Cmd+T — new tab (not from text inputs)
+      if (e.key === 't' && !e.shiftKey && !inInput) {
         e.preventDefault();
         actions.newTab();
         return;
       }
 
-      // Cmd+W — close tab
-      if (e.key === 'w' && !e.shiftKey) {
+      // Cmd+W — close tab (not from text inputs)
+      if (e.key === 'w' && !e.shiftKey && !inInput) {
         e.preventDefault();
         actions.closeTab();
         return;

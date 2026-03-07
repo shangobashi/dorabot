@@ -272,7 +272,15 @@ export function useTabs(gw: ReturnType<typeof useGateway>, layout: ReturnType<ty
 
   // Persist tabs
   useEffect(() => {
-    localStorage.setItem(TABS_STORAGE_KEY, JSON.stringify(tabs));
+    // Strip large content from diff/terminal tabs before persisting
+    const serializable = tabs.map(t => {
+      if (t.type === 'diff') return { ...t, oldContent: '', newContent: '' };
+      if (t.type === 'terminal') return { ...t, shellId: '' }; // can't restore shells
+      return t;
+    });
+    try {
+      localStorage.setItem(TABS_STORAGE_KEY, JSON.stringify(serializable));
+    } catch { /* quota exceeded, ignore */ }
   }, [tabs]);
 
   useEffect(() => {

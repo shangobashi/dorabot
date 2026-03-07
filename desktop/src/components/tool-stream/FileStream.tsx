@@ -103,50 +103,12 @@ export function FileStream({ name, input, output, isError, streaming }: ToolUIPr
 
       {/* write content preview */}
       {isWrite && writeContent && (
-        <motion.div
-          className="px-2 py-2 max-h-[140px] overflow-auto"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-        >
-          {writeContent.split("\n").map((line: string, i: number) => (
-            <div key={i} className="flex gap-2 text-[10px] leading-5">
-              <span className="text-success/30 w-4 text-right select-none shrink-0">{i + 1}</span>
-              <span className="text-foreground/70 whitespace-pre-wrap break-all">
-                {line}
-                {streaming && i === writeContent.split("\n").length - 1 && (
-                  <motion.span
-                    className="inline-block w-[2px] h-3 bg-success/60 ml-0.5 align-middle"
-                    animate={{ opacity: [1, 0] }}
-                    transition={{ duration: 0.5, repeat: Infinity }}
-                  />
-                )}
-              </span>
-            </div>
-          ))}
-        </motion.div>
+        <WritePreview content={writeContent} streaming={streaming} />
       )}
 
       {/* streaming skeleton lines (shown while waiting for output) */}
       {streaming && !output && !isEdit && !writeContent && (
-        <div className="px-2 py-2 space-y-0.5">
-          {fakeLineNumbers(5).map((n, i) => (
-            <motion.div
-              key={i}
-              className="flex gap-2 items-center"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: i * 0.08 }}
-            >
-              <span className="text-[9px] text-muted-foreground/20 w-4 text-right select-none">{n}</span>
-              <motion.div
-                className="h-2.5 rounded-sm bg-muted-foreground/8"
-                style={{ width: `${30 + Math.random() * 50}%` }}
-                animate={{ opacity: [0.3, 0.6, 0.3] }}
-                transition={{ duration: 1.5, repeat: Infinity, delay: i * 0.1 }}
-              />
-            </motion.div>
-          ))}
-        </div>
+        <SkeletonLines />
       )}
 
       {/* output */}
@@ -167,6 +129,59 @@ export function FileStream({ name, input, output, isError, streaming }: ToolUIPr
         )}
       </AnimatePresence>
     </div>
+  )
+}
+
+const SKELETON_WIDTHS = [72, 45, 63, 38, 56]; // stable widths, no Math.random()
+
+function SkeletonLines() {
+  return (
+    <div className="px-2 py-2 space-y-0.5">
+      {SKELETON_WIDTHS.map((w, i) => (
+        <motion.div
+          key={i}
+          className="flex gap-2 items-center"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: i * 0.08 }}
+        >
+          <span className="text-[9px] text-muted-foreground/20 w-4 text-right select-none">{i + 1}</span>
+          <motion.div
+            className="h-2.5 rounded-sm bg-muted-foreground/8"
+            style={{ width: `${w}%` }}
+            animate={{ opacity: [0.3, 0.6, 0.3] }}
+            transition={{ duration: 1.5, repeat: Infinity, delay: i * 0.1 }}
+          />
+        </motion.div>
+      ))}
+    </div>
+  )
+}
+
+function WritePreview({ content, streaming }: { content: string; streaming?: boolean }) {
+  const lines = useMemo(() => content.split("\n"), [content])
+  return (
+    <motion.div
+      className="px-2 py-2 max-h-[140px] overflow-auto"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+    >
+      {lines.map((line: string, i: number) => (
+        <div key={i} className="flex gap-2 text-[10px] leading-5">
+          <span className="text-success/30 w-4 text-right select-none shrink-0">{i + 1}</span>
+          <span className="text-foreground/70 whitespace-pre-wrap break-all">
+            {line}
+            {streaming && i === lines.length - 1 && (
+              <motion.span
+                className="inline-block w-[2px] h-3 bg-success/60 ml-0.5 align-middle"
+                animate={{ opacity: [1, 0] }}
+                transition={{ duration: 0.5, repeat: Infinity }}
+              />
+            )}
+          </span>
+        </div>
+      ))}
+    </motion.div>
   )
 }
 

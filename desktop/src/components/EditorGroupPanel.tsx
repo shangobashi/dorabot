@@ -129,6 +129,8 @@ export function EditorGroupPanel({
             pendingQuestion={ss.pendingQuestion}
             sessionKey={activeTab.sessionKey}
             onNavigateSettings={onNavigateSettings}
+            onOpenFile={(filePath) => tabState.openFileTab(filePath)}
+            onOpenDiff={(opts) => tabState.openDiffTab(opts)}
           />
         );
       }

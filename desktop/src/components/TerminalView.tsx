@@ -174,7 +174,7 @@ export function TerminalView({ shellId, rpc, onShellEvent, theme = 'dark' }: Pro
   }, [shellId, onShellEvent]);
 
   return (
-    <div className="flex flex-col h-full min-h-0 bg-[#1a1a1a]">
+    <div className={`flex flex-col h-full min-h-0 ${theme === 'dark' ? 'bg-[#1a1a1a]' : 'bg-white'}`}>
       <div
         ref={containerRef}
         className="flex-1 min-h-0 p-1"
