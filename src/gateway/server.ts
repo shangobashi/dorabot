@@ -4789,6 +4789,19 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           }
         }
 
+        case 'fs.reveal': {
+          const filePath = params?.path as string;
+          if (!filePath) return { id, error: 'path required' };
+          const resolved = resolve(filePath);
+          try {
+            const { execFile } = await import('node:child_process');
+            execFile('open', ['-R', resolved]);
+            return { id, result: { revealed: resolved } };
+          } catch (err) {
+            return { id, error: err instanceof Error ? err.message : String(err) };
+          }
+        }
+
         case 'fs.stat': {
           const filePath = params?.path as string;
           if (!filePath) return { id, error: 'path required' };
@@ -4924,6 +4937,23 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           const resolved = resolve(repoRoot);
           try {
             const { execFileSync } = await import('node:child_process');
+            // For remote branches like origin/foo, try to create local tracking branch
+            if (branch.includes('/')) {
+              const parts = branch.split('/');
+              const localName = parts.slice(1).join('/');
+              try {
+                execFileSync('git', ['checkout', '-b', localName, '--track', branch], {
+                  cwd: resolved, encoding: 'utf-8', timeout: 10000,
+                });
+                return { id, result: { switched: localName } };
+              } catch {
+                // Local branch might already exist, try plain checkout
+                execFileSync('git', ['checkout', localName], {
+                  cwd: resolved, encoding: 'utf-8', timeout: 10000,
+                });
+                return { id, result: { switched: localName } };
+              }
+            }
             execFileSync('git', ['checkout', branch], {
               cwd: resolved, encoding: 'utf-8', timeout: 10000,
             });
@@ -5019,6 +5049,63 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           }
         }
 
+        case 'git.discardFile': {
+          const repoRoot = params?.path as string;
+          const filePath = params?.file as string;
+          if (!repoRoot || !filePath) return { id, error: 'path and file required' };
+          const resolved = resolve(repoRoot);
+          if (!pathResolve(resolved, filePath).startsWith(resolved)) return { id, error: 'path traversal not allowed' };
+          try {
+            const { execFileSync } = await import('node:child_process');
+            // Check if the file is untracked
+            const status = execFileSync('git', ['status', '--porcelain', '--', filePath], {
+              cwd: resolved, encoding: 'utf-8', timeout: 5000,
+            }).trim();
+            if (status.startsWith('??')) {
+              // Untracked: remove the file
+              unlinkSync(pathResolve(resolved, filePath));
+            } else {
+              // Tracked: restore from HEAD
+              execFileSync('git', ['checkout', 'HEAD', '--', filePath], {
+                cwd: resolved, encoding: 'utf-8', timeout: 5000,
+              });
+            }
+            return { id, result: { discarded: filePath } };
+          } catch (err) {
+            return { id, error: err instanceof Error ? err.message : String(err) };
+          }
+        }
+
+        case 'git.stageAll': {
+          const repoRoot = params?.path as string;
+          if (!repoRoot) return { id, error: 'path required' };
+          const resolved = resolve(repoRoot);
+          try {
+            const { execFileSync } = await import('node:child_process');
+            execFileSync('git', ['add', '-A'], {
+              cwd: resolved, encoding: 'utf-8', timeout: 10000,
+            });
+            return { id, result: { staged: 'all' } };
+          } catch (err) {
+            return { id, error: err instanceof Error ? err.message : String(err) };
+          }
+        }
+
+        case 'git.unstageAll': {
+          const repoRoot = params?.path as string;
+          if (!repoRoot) return { id, error: 'path required' };
+          const resolved = resolve(repoRoot);
+          try {
+            const { execFileSync } = await import('node:child_process');
+            execFileSync('git', ['reset', 'HEAD'], {
+              cwd: resolved, encoding: 'utf-8', timeout: 10000,
+            });
+            return { id, result: { unstaged: 'all' } };
+          } catch (err) {
+            return { id, error: err instanceof Error ? err.message : String(err) };
+          }
+        }
+
         case 'git.commit': {
           const repoRoot = params?.path as string;
           const message = params?.message as string;
@@ -5084,7 +5171,7 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           if (shellProcesses.has(shellId)) return { id, result: { spawned: true } };
 
           const shell = process.env.SHELL || '/bin/zsh';
-          const cwd = config.cwd || homedir();
+          const cwd = (params?.cwd as string) || config.cwd || homedir();
 
           const proc = spawnProcess(shell, ['-l'], {
             cwd,

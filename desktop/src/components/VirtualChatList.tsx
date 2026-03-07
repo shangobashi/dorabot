@@ -135,12 +135,31 @@ export function VirtualChatList<T>({
     return () => observer.disconnect();
   }, [onScroll]);
 
+  // Auto-scroll to bottom when near bottom and items change
   useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport || !nearBottomRef.current) return;
     viewport.scrollTo({ top: viewport.scrollHeight, behavior: scrollBehavior });
     onScrollBehaviorConsumed?.();
   }, [items, onScrollBehaviorConsumed, scrollBehavior]);
+
+  // Ensure we start at the bottom on initial mount
+  const initialScrollDoneRef = useRef(false);
+  const hasItems = items.length > 0;
+  useEffect(() => {
+    if (initialScrollDoneRef.current) return;
+    const viewport = viewportRef.current;
+    if (!viewport || !hasItems) return;
+    let inner: number;
+    const outer = requestAnimationFrame(() => {
+      inner = requestAnimationFrame(() => {
+        viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'auto' });
+        nearBottomRef.current = true;
+        initialScrollDoneRef.current = true;
+      });
+    });
+    return () => { cancelAnimationFrame(outer); cancelAnimationFrame(inner); };
+  }, [hasItems]);
 
   const attachRow = useCallback((index: number, el: HTMLDivElement | null) => {
     const ro = observerRef.current;

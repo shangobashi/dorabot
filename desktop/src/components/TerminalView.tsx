@@ -6,6 +6,7 @@ import '@xterm/xterm/css/xterm.css';
 
 type Props = {
   shellId: string;
+  cwd?: string;
   rpc: (method: string, params?: Record<string, unknown>) => Promise<unknown>;
   onShellEvent?: (listener: (data: { shellId: string; type: string; data?: string }) => void) => () => void;
   theme?: 'dark' | 'light';
@@ -61,7 +62,7 @@ const LIGHT_THEME = {
   brightWhite: '#ffffff',
 };
 
-export function TerminalView({ shellId, rpc, onShellEvent, theme = 'dark' }: Props) {
+export function TerminalView({ shellId, cwd, rpc, onShellEvent, theme = 'dark' }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -131,7 +132,7 @@ export function TerminalView({ shellId, rpc, onShellEvent, theme = 'dark' }: Pro
     // Spawn shell process
     const cols = term.cols;
     const rows = term.rows;
-    rpc('shell.spawn', { shellId, cols, rows }).then(() => {
+    rpc('shell.spawn', { shellId, cols, rows, ...(cwd ? { cwd } : {}) }).then(() => {
       setConnected(true);
     }).catch((err) => {
       term.writeln(`\r\n\x1b[31mFailed to spawn shell: ${err}\x1b[0m\r\n`);

@@ -61,6 +61,8 @@ type Props = {
   onSwitchChannel: (ch: 'whatsapp' | 'telegram') => void;
   onSetupChat: (prompt: string) => void;
   onNavClick: (navId: string) => void;
+  onSplitRight?: () => void;
+  onSplitDown?: () => void;
 };
 
 export function EditorGroupPanel({
@@ -78,6 +80,8 @@ export function EditorGroupPanel({
   onSwitchChannel,
   onSetupChat,
   onNavClick,
+  onSplitRight,
+  onSplitDown,
 }: Props) {
   const groupTabs = group.tabIds
     .map(id => tabs.find(t => t.id === id))
@@ -111,6 +115,7 @@ export function EditorGroupPanel({
         return (
           <TerminalView
             shellId={activeTab.shellId}
+            cwd={activeTab.cwd}
             rpc={gateway.rpc}
             onShellEvent={gateway.onShellEvent}
           />
@@ -194,6 +199,11 @@ export function EditorGroupPanel({
           onFocusGroup();
           tabState.newChatTab(group.id);
         }}
+        onCloseOtherTabs={(tabId, groupId) => tabState.closeOtherTabs(tabId, groupId as any)}
+        onCloseAllTabs={(groupId) => tabState.closeAllTabs(groupId as any)}
+        onCloseTabsToRight={(tabId, groupId) => tabState.closeTabsToRight(tabId, groupId as any)}
+        onSplitRight={onSplitRight}
+        onSplitDown={onSplitDown}
       />
       <div className="@container flex-1 min-h-0 min-w-0 relative">
         <ErrorBoundary>

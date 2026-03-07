@@ -40,6 +40,7 @@ export type TerminalTab = {
   label: string;
   closable: true;
   shellId: string;
+  cwd?: string;
 };
 
 export type ViewTab = {
@@ -571,7 +572,7 @@ export function useTabs(gw: ReturnType<typeof useGateway>, layout: ReturnType<ty
     layout.addTabToGroup(id, groupId);
   }, [layout]);
 
-  const openTerminalTab = useCallback((groupId?: GroupId) => {
+  const openTerminalTab = useCallback((cwd?: string, groupId?: GroupId) => {
     const shellId = crypto.randomUUID();
     const id = `terminal:${shellId}`;
     const tab: TerminalTab = {
@@ -580,6 +581,7 @@ export function useTabs(gw: ReturnType<typeof useGateway>, layout: ReturnType<ty
       label: 'Terminal',
       closable: true,
       shellId,
+      cwd,
     };
     setTabs(prev => [...prev, tab]);
     setActiveTabId(id);
@@ -603,6 +605,67 @@ export function useTabs(gw: ReturnType<typeof useGateway>, layout: ReturnType<ty
     layout.addTabToGroup(tab.id, groupId);
     return { tabId: tab.id, sessionKey, chatId };
   }, [gw, layout]);
+
+  const closeOtherTabs = useCallback((tabId: string, groupId?: GroupId) => {
+    const gid = groupId || layout.activeGroupId;
+    const group = layout.groups.find(g => g.id === gid);
+    if (!group) return;
+    const toClose = new Set(group.tabIds.filter(id => id !== tabId));
+    // Batch: remove all at once, then clean up gateway/shells
+    setTabs(prev => {
+      const closing = prev.filter(t => toClose.has(t.id) && t.closable);
+      for (const tab of closing) {
+        if (isChatTab(tab)) gw.untrackSession(tab.sessionKey);
+        if (isTerminalTab(tab)) gw.rpc('shell.kill', { shellId: tab.shellId }).catch(() => {});
+        layout.removeTabFromGroup(tab.id);
+      }
+      return prev.filter(t => !toClose.has(t.id) || !t.closable);
+    });
+    focusTab(tabId, gid);
+  }, [layout, gw, focusTab]);
+
+  const closeAllTabs = useCallback((groupId?: GroupId) => {
+    const gid = groupId || layout.activeGroupId;
+    const group = layout.groups.find(g => g.id === gid);
+    if (!group) return;
+    const toClose = new Set(group.tabIds);
+    setTabs(prev => {
+      const closing = prev.filter(t => toClose.has(t.id) && t.closable);
+      for (const tab of closing) {
+        if (isChatTab(tab)) gw.untrackSession(tab.sessionKey);
+        if (isTerminalTab(tab)) gw.rpc('shell.kill', { shellId: tab.shellId }).catch(() => {});
+        layout.removeTabFromGroup(tab.id);
+      }
+      const remaining = prev.filter(t => !toClose.has(t.id) || !t.closable);
+      if (remaining.length === 0) {
+        const fallback = makeDefaultChatTab();
+        gw.trackSession(fallback.sessionKey);
+        gw.setActiveSession(fallback.sessionKey, fallback.chatId);
+        layout.addTabToGroup(fallback.id, gid);
+        return [fallback];
+      }
+      return remaining;
+    });
+  }, [layout, gw]);
+
+  const closeTabsToRight = useCallback((tabId: string, groupId?: GroupId) => {
+    const gid = groupId || layout.activeGroupId;
+    const group = layout.groups.find(g => g.id === gid);
+    if (!group) return;
+    const idx = group.tabIds.indexOf(tabId);
+    if (idx < 0) return;
+    const toClose = new Set(group.tabIds.slice(idx + 1));
+    setTabs(prev => {
+      const closing = prev.filter(t => toClose.has(t.id) && t.closable);
+      for (const tab of closing) {
+        if (isChatTab(tab)) gw.untrackSession(tab.sessionKey);
+        if (isTerminalTab(tab)) gw.rpc('shell.kill', { shellId: tab.shellId }).catch(() => {});
+        layout.removeTabFromGroup(tab.id);
+      }
+      return prev.filter(t => !toClose.has(t.id) || !t.closable);
+    });
+    focusTab(tabId, gid);
+  }, [layout, gw, focusTab]);
 
   const updateTabLabel = useCallback((tabId: string, label: string) => {
     setTabs(prev => prev.map(t => t.id === tabId ? { ...t, label } : t));
@@ -681,6 +744,9 @@ export function useTabs(gw: ReturnType<typeof useGateway>, layout: ReturnType<ty
     activeTab,
     openTab,
     closeTab,
+    closeOtherTabs,
+    closeAllTabs,
+    closeTabsToRight,
     focusTab,
     openChatTab,
     openViewTab,

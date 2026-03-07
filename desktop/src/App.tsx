@@ -600,6 +600,8 @@ export default function App() {
       setTimeout(() => gw.sendMessage(prompt, created.sessionKey, created.chatId), 0);
     },
     onNavClick: (navId: string) => handleNavClick(navId as TabType),
+    onSplitRight: layout.splitHorizontal,
+    onSplitDown: layout.splitVertical,
   }), [tabState, gw, selectedChannel, layout, handleNavClick, handleViewSession, draggingTab]);
 
   const renderLayout = () => {
@@ -1060,6 +1062,7 @@ export default function App() {
                 onFileClick={(path) => tabState.openFileTab(path)}
                 onOpenDiff={(opts) => tabState.openDiffTab(opts)}
                 onFileChange={gw.onFileChange}
+                onOpenTerminal={(cwd) => tabState.openTerminalTab(cwd)}
                 mode={sidebarView}
                 initialViewRoot={fileExplorerStateRef.current.viewRoot || undefined}
                 initialExpanded={fileExplorerStateRef.current.expanded}

@@ -662,13 +662,31 @@ export function ChatView({ gateway, chatItems, agentStatus, pendingQuestion, ses
   const [sending, setSending] = useState(false);
   const [attachedImages, setAttachedImages] = useState<ImageAttachment[]>([]);
   const [compact, setCompact] = useState(false);
+  const [inputHeight, setInputHeight] = useState<number | null>(null);
+  const [slashOpen, setSlashOpen] = useState(false);
+  const [slashFilter, setSlashFilter] = useState('');
+  const [slashIndex, setSlashIndex] = useState(0);
   const nextAutoScrollBehaviorRef = useRef<ScrollBehavior>('auto');
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const landingInputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const landingRef = useRef<HTMLDivElement>(null);
+  const sentHistoryRef = useRef<string[]>([]);
+  const historyIndexRef = useRef(-1);
+  const dragStartRef = useRef<{ y: number; height: number } | null>(null);
   const isRunning = agentStatus !== 'idle';
   const isEmpty = chatItems.length === 0;
+
+  const SLASH_COMMANDS = useMemo(() => [
+    { command: '/clear', description: 'Clear chat', autoSend: true },
+    { command: '/new', description: 'New chat tab', autoSend: true },
+    { command: '/help', description: 'Show shortcuts', autoSend: true },
+  ], []);
+
+  const filteredSlashCommands = useMemo(() => {
+    if (!slashOpen) return [];
+    return SLASH_COMMANDS.filter(c => c.command.startsWith('/' + slashFilter));
+  }, [slashOpen, slashFilter, SLASH_COMMANDS]);
 
   // progress from last TodoWrite in this chat
   const progress = useMemo(() => {
@@ -765,10 +783,22 @@ export function ChatView({ gateway, chatItems, agentStatus, pendingQuestion, ses
     const prompt = overridePrompt || input.trim();
     if ((!prompt && attachedImages.length === 0) || sending || pendingQuestion) return;
 
+    // Push to message history
+    if (prompt) {
+      const history = sentHistoryRef.current;
+      if (history[history.length - 1] !== prompt) {
+        history.push(prompt);
+      }
+      historyIndexRef.current = -1;
+    }
+
     const images = attachedImages.length > 0 ? [...attachedImages] : undefined;
     nextAutoScrollBehaviorRef.current = 'smooth';
     if (!overridePrompt) setInput('');
     setAttachedImages([]);
+    setInputHeight(null);
+    setSlashOpen(false);
+    setSlashFilter('');
     setSending(true);
     try {
       const chatId = sessionKey ? sessionKey.split(':').slice(2).join(':') : undefined;
@@ -778,7 +808,112 @@ export function ChatView({ gateway, chatItems, agentStatus, pendingQuestion, ses
     }
   };
 
+  const handleInputChange = useCallback((value: string) => {
+    setInput(value);
+    historyIndexRef.current = -1;
+    // slash command detection
+    if (value.startsWith('/')) {
+      setSlashOpen(true);
+      setSlashFilter(value.slice(1));
+      setSlashIndex(0);
+    } else {
+      setSlashOpen(false);
+      setSlashFilter('');
+    }
+  }, []);
+
+  const handleDragHandleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const textarea = inputRef.current || landingInputRef.current;
+    if (!textarea) return;
+    const startY = e.clientY;
+    const startHeight = textarea.offsetHeight;
+    dragStartRef.current = { y: startY, height: startHeight };
+
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!dragStartRef.current) return;
+      const delta = dragStartRef.current.y - ev.clientY;
+      const newHeight = Math.min(400, Math.max(64, dragStartRef.current.height + delta));
+      setInputHeight(newHeight);
+    };
+    const onMouseUp = () => {
+      dragStartRef.current = null;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  }, []);
+
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // Slash command navigation
+    if (slashOpen && filteredSlashCommands.length > 0) {
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSlashIndex(i => (i - 1 + filteredSlashCommands.length) % filteredSlashCommands.length);
+        return;
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSlashIndex(i => (i + 1) % filteredSlashCommands.length);
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        const cmd = filteredSlashCommands[slashIndex];
+        if (cmd) {
+          setSlashOpen(false);
+          setSlashFilter('');
+          if (cmd.autoSend) {
+            setInput('');
+            handleSend(cmd.command);
+          } else {
+            setInput(cmd.command + ' ');
+          }
+        }
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setSlashOpen(false);
+        setSlashFilter('');
+        return;
+      }
+    }
+
+    // Up arrow for message history (when input is empty or browsing history)
+    if (e.key === 'ArrowUp' && !e.shiftKey) {
+      const history = sentHistoryRef.current;
+      if (history.length === 0) return;
+      const currentIdx = historyIndexRef.current;
+      const isAtStart = e.currentTarget.selectionStart === 0 && e.currentTarget.selectionEnd === 0;
+      if (input === '' || currentIdx >= 0 || isAtStart) {
+        e.preventDefault();
+        const nextIdx = currentIdx < 0 ? history.length - 1 : Math.max(0, currentIdx - 1);
+        historyIndexRef.current = nextIdx;
+        setInput(history[nextIdx]);
+      }
+      return;
+    }
+
+    // Down arrow for message history
+    if (e.key === 'ArrowDown' && !e.shiftKey) {
+      const history = sentHistoryRef.current;
+      const currentIdx = historyIndexRef.current;
+      if (currentIdx >= 0) {
+        e.preventDefault();
+        if (currentIdx >= history.length - 1) {
+          historyIndexRef.current = -1;
+          setInput('');
+        } else {
+          const nextIdx = currentIdx + 1;
+          historyIndexRef.current = nextIdx;
+          setInput(history[nextIdx]);
+        }
+        return;
+      }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -897,17 +1032,53 @@ export function ChatView({ gateway, chatItems, agentStatus, pendingQuestion, ses
               </div>
 
               {/* centered input */}
-              <Card className="rounded-2xl chat-input-area" onDrop={handleDrop} onDragOver={handleDragOver}>
+              <Card className="relative rounded-2xl chat-input-area" onDrop={handleDrop} onDragOver={handleDragOver}>
+                {/* drag handle */}
+                <div
+                  className="absolute top-0 left-0 right-0 h-2 cursor-ns-resize flex items-center justify-center group z-10"
+                  onMouseDown={handleDragHandleMouseDown}
+                >
+                  <div className="w-8 h-0.5 rounded-full bg-border/60 group-hover:bg-border transition-colors" />
+                </div>
+                {/* slash command dropdown */}
+                {slashOpen && filteredSlashCommands.length > 0 && (
+                  <div className="absolute bottom-full left-3 right-3 mb-1 rounded-lg border border-border bg-popover shadow-md z-20 overflow-hidden">
+                    {filteredSlashCommands.map((cmd, i) => (
+                      <button
+                        key={cmd.command}
+                        className={cn(
+                          'flex items-center gap-2 w-full px-3 py-1.5 text-xs text-left transition-colors',
+                          i === slashIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-muted/50'
+                        )}
+                        onMouseDown={e => {
+                          e.preventDefault();
+                          setSlashOpen(false);
+                          setSlashFilter('');
+                          if (cmd.autoSend) {
+                            setInput('');
+                            handleSend(cmd.command);
+                          } else {
+                            setInput(cmd.command + ' ');
+                          }
+                        }}
+                      >
+                        <span className="font-mono text-primary">{cmd.command}</span>
+                        <span className="text-muted-foreground">{cmd.description}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <ImagePreviewStrip images={attachedImages} onRemove={j => setAttachedImages(prev => prev.filter((_, k) => k !== j))} />
                 <Textarea
                   ref={landingInputRef}
                   value={input}
-                  onChange={e => setInput(e.target.value)}
+                  onChange={e => handleInputChange(e.target.value)}
                   onKeyDown={handleKeyDown}
                   onPaste={handlePaste}
                   placeholder={!connected ? 'waiting for gateway...' : !authenticated ? 'set up your AI provider to get started' : 'what are we building?'}
                   disabled={!isReady}
-                  className="w-full min-h-[80px] max-h-[200px] resize-none text-sm border-0 rounded-2xl bg-transparent shadow-none focus-visible:ring-0"
+                  className="w-full min-h-[80px] max-h-[200px] resize-none text-sm border-0 rounded-2xl bg-transparent shadow-none focus-visible:ring-0 pt-3"
+                  style={inputHeight ? { height: inputHeight, minHeight: 64, maxHeight: 400 } : undefined}
                   rows={2}
                 />
                 <input
@@ -930,6 +1101,9 @@ export function ChatView({ gateway, chatItems, agentStatus, pendingQuestion, ses
                     <Paperclip className="w-4 h-4 text-muted-foreground" />
                   </Button>
                   <ModelSelector gateway={gateway} disabled={!connected} />
+                  {input.trim() && (
+                    <span className="text-[9px] text-muted-foreground/60 ml-2 select-none">{'\u21E7\u21B5 new line'}</span>
+                  )}
                   <span className="flex-1" />
                   <Button
                     size="sm"
@@ -1024,17 +1198,53 @@ export function ChatView({ gateway, chatItems, agentStatus, pendingQuestion, ses
 
       {/* input area */}
       <div className="px-4 py-3 shrink-0 min-w-0">
-        <Card className="rounded-2xl chat-input-area" onDrop={handleDrop} onDragOver={handleDragOver}>
+        <Card className="relative rounded-2xl chat-input-area" onDrop={handleDrop} onDragOver={handleDragOver}>
+          {/* drag handle */}
+          <div
+            className="absolute top-0 left-0 right-0 h-2 cursor-ns-resize flex items-center justify-center group z-10"
+            onMouseDown={handleDragHandleMouseDown}
+          >
+            <div className="w-8 h-0.5 rounded-full bg-border/60 group-hover:bg-border transition-colors" />
+          </div>
+          {/* slash command dropdown */}
+          {slashOpen && filteredSlashCommands.length > 0 && (
+            <div className="absolute bottom-full left-3 right-3 mb-1 rounded-lg border border-border bg-popover shadow-md z-20 overflow-hidden">
+              {filteredSlashCommands.map((cmd, i) => (
+                <button
+                  key={cmd.command}
+                  className={cn(
+                    'flex items-center gap-2 w-full px-3 py-1.5 text-xs text-left transition-colors',
+                    i === slashIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-muted/50'
+                  )}
+                  onMouseDown={e => {
+                    e.preventDefault();
+                    setSlashOpen(false);
+                    setSlashFilter('');
+                    if (cmd.autoSend) {
+                      setInput('');
+                      handleSend(cmd.command);
+                    } else {
+                      setInput(cmd.command + ' ');
+                    }
+                  }}
+                >
+                  <span className="font-mono text-primary">{cmd.command}</span>
+                  <span className="text-muted-foreground">{cmd.description}</span>
+                </button>
+              ))}
+            </div>
+          )}
           <ImagePreviewStrip images={attachedImages} onRemove={j => setAttachedImages(prev => prev.filter((_, k) => k !== j))} />
           <Textarea
             ref={inputRef}
             value={input}
-            onChange={e => setInput(e.target.value)}
+            onChange={e => handleInputChange(e.target.value)}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             placeholder={connected ? 'type a message...' : 'waiting for gateway...'}
             disabled={!connected || !!pendingQuestion}
-            className="w-full min-h-[64px] max-h-[200px] resize-none text-[13px] border-0 rounded-2xl bg-transparent shadow-none focus-visible:ring-0"
+            className="w-full min-h-[64px] max-h-[200px] resize-none text-[13px] border-0 rounded-2xl bg-transparent shadow-none focus-visible:ring-0 pt-3"
+            style={inputHeight ? { height: inputHeight, minHeight: 64, maxHeight: 400 } : undefined}
             rows={2}
           />
           <input
@@ -1057,6 +1267,9 @@ export function ChatView({ gateway, chatItems, agentStatus, pendingQuestion, ses
               <Paperclip className="w-4 h-4 text-muted-foreground" />
             </Button>
             <ModelSelector gateway={gateway} disabled={!connected} />
+            {input.trim() && (
+              <span className="text-[9px] text-muted-foreground/60 ml-2 select-none">{'\u21E7\u21B5 new line'}</span>
+            )}
             <span className="flex-1" />
             {isRunning ? (
               <Button

@@ -1,3 +1,5 @@
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import type { Tab } from '../hooks/useTabs';
 import { isChatTab, isFileTab, isDiffTab, isTerminalTab } from '../hooks/useTabs';
 import { whatsappImg, telegramImg } from '../assets';
@@ -52,6 +54,7 @@ function DraggableTab({
   groupId,
   onFocusTab,
   onCloseTab,
+  onContextMenu,
 }: {
   tab: Tab;
   isActive: boolean;
@@ -61,6 +64,7 @@ function DraggableTab({
   groupId?: string;
   onFocusTab: (id: string) => void;
   onCloseTab: (id: string) => void;
+  onContextMenu: (e: React.MouseEvent, tabId: string) => void;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `tab:${tab.id}`,
@@ -88,6 +92,7 @@ function DraggableTab({
           onCloseTab(tab.id);
         }
       }}
+      onContextMenu={(e) => onContextMenu(e, tab.id)}
     >
       {isActive && (
         <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-primary" />
@@ -143,6 +148,143 @@ function DraggableTab({
   return inner;
 }
 
+type ContextMenuState = {
+  x: number;
+  y: number;
+  tabId: string;
+  groupId: string;
+} | null;
+
+function TabContextMenu({
+  menu,
+  tabs,
+  onClose,
+  onCloseTab,
+  onCloseOtherTabs,
+  onCloseAllTabs,
+  onCloseTabsToRight,
+  onSplitRight,
+  onSplitDown,
+}: {
+  menu: NonNullable<ContextMenuState>;
+  tabs: Tab[];
+  onClose: () => void;
+  onCloseTab: (id: string) => void;
+  onCloseOtherTabs: (tabId: string, groupId: string) => void;
+  onCloseAllTabs: (groupId: string) => void;
+  onCloseTabsToRight: (tabId: string, groupId: string) => void;
+  onSplitRight: () => void;
+  onSplitDown: () => void;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [onClose]);
+
+  // Adjust position to stay within viewport
+  useEffect(() => {
+    if (!menuRef.current) return;
+    const rect = menuRef.current.getBoundingClientRect();
+    const el = menuRef.current;
+    if (rect.right > window.innerWidth) {
+      el.style.left = `${window.innerWidth - rect.width - 4}px`;
+    }
+    if (rect.bottom > window.innerHeight) {
+      el.style.top = `${window.innerHeight - rect.height - 4}px`;
+    }
+  }, []);
+
+  const tab = tabs.find(t => t.id === menu.tabId);
+  const isFile = tab && (isFileTab(tab) || isDiffTab(tab));
+  const filePath = tab && isFileTab(tab) ? tab.filePath : tab && isDiffTab(tab) ? tab.filePath : null;
+
+  const itemClass = 'text-xs px-2 py-1.5 rounded-sm hover:bg-accent cursor-default select-none flex items-center justify-between gap-4';
+
+  const handleAction = (action: () => void) => {
+    action();
+    onClose();
+  };
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      className="fixed z-[9999] bg-popover text-popover-foreground border rounded-md shadow-md p-1 min-w-[180px]"
+      style={{ left: menu.x, top: menu.y }}
+    >
+      <div
+        className={itemClass}
+        onClick={() => handleAction(() => onCloseTab(menu.tabId))}
+      >
+        <span>Close</span>
+      </div>
+      <div
+        className={itemClass}
+        onClick={() => handleAction(() => onCloseOtherTabs(menu.tabId, menu.groupId))}
+      >
+        <span>Close Others</span>
+      </div>
+      <div
+        className={itemClass}
+        onClick={() => handleAction(() => onCloseAllTabs(menu.groupId))}
+      >
+        <span>Close All</span>
+      </div>
+      <div
+        className={itemClass}
+        onClick={() => handleAction(() => onCloseTabsToRight(menu.tabId, menu.groupId))}
+      >
+        <span>Close to the Right</span>
+      </div>
+
+      <div className="h-px bg-border my-1" />
+
+      {isFile && filePath && (
+        <>
+          <div
+            className={itemClass}
+            onClick={() => handleAction(() => {
+              navigator.clipboard.writeText(filePath);
+            })}
+          >
+            <span>Copy Path</span>
+          </div>
+          <div className="h-px bg-border my-1" />
+        </>
+      )}
+
+      <div
+        className={itemClass}
+        onClick={() => handleAction(onSplitRight)}
+      >
+        <span>Split Right</span>
+        <span className="text-muted-foreground text-[10px]">\u2318D</span>
+      </div>
+      <div
+        className={itemClass}
+        onClick={() => handleAction(onSplitDown)}
+      >
+        <span>Split Down</span>
+        <span className="text-muted-foreground text-[10px]">\u21E7\u2318D</span>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 type TabBarProps = {
   tabs: Tab[];
   activeTabId: string;
@@ -155,13 +297,27 @@ type TabBarProps = {
   onFocusTab: (id: string) => void;
   onCloseTab: (id: string) => void;
   onNewChat: () => void;
+  onCloseOtherTabs?: (tabId: string, groupId: string) => void;
+  onCloseAllTabs?: (groupId: string) => void;
+  onCloseTabsToRight?: (tabId: string, groupId: string) => void;
+  onSplitRight?: () => void;
+  onSplitDown?: () => void;
 };
 
-export function TabBar({ tabs, activeTabId, sessionStates, unreadBySession = {}, dirtyTabs, isActiveGroup, isMultiPane, groupId, onFocusTab, onCloseTab, onNewChat }: TabBarProps) {
+export function TabBar({ tabs, activeTabId, sessionStates, unreadBySession = {}, dirtyTabs, isActiveGroup, isMultiPane, groupId, onFocusTab, onCloseTab, onNewChat, onCloseOtherTabs, onCloseAllTabs, onCloseTabsToRight, onSplitRight, onSplitDown }: TabBarProps) {
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
+
   const { setNodeRef, isOver } = useDroppable({
     id: `group-drop:${groupId || 'default'}`,
     data: { groupId },
   });
+
+  const handleContextMenu = useCallback((e: React.MouseEvent, tabId: string) => {
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY, tabId, groupId: groupId || 'g0' });
+  }, [groupId]);
+
+  const closeContextMenu = useCallback(() => setContextMenu(null), []);
 
   return (
     <div
@@ -188,6 +344,7 @@ export function TabBar({ tabs, activeTabId, sessionStates, unreadBySession = {},
               groupId={groupId}
               onFocusTab={onFocusTab}
               onCloseTab={onCloseTab}
+              onContextMenu={handleContextMenu}
             />
           );
         })}
@@ -200,6 +357,20 @@ export function TabBar({ tabs, activeTabId, sessionStates, unreadBySession = {},
       >
         <Plus className="w-3.5 h-3.5" />
       </button>
+
+      {contextMenu && (
+        <TabContextMenu
+          menu={contextMenu}
+          tabs={tabs}
+          onClose={closeContextMenu}
+          onCloseTab={onCloseTab}
+          onCloseOtherTabs={onCloseOtherTabs || (() => {})}
+          onCloseAllTabs={onCloseAllTabs || (() => {})}
+          onCloseTabsToRight={onCloseTabsToRight || (() => {})}
+          onSplitRight={onSplitRight || (() => {})}
+          onSplitDown={onSplitDown || (() => {})}
+        />
+      )}
     </div>
   );
 }

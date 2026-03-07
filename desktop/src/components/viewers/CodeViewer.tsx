@@ -27,7 +27,7 @@ export function CodeViewer({ content, filePath }: Props) {
   }
 
   return (
-    <div className="code-viewer">
+    <div className="code-viewer h-full min-h-full">
       <ShikiHighlighter
         language={language}
         theme={theme === 'dark' ? 'vitesse-dark' : 'vitesse-light'}
@@ -40,8 +40,7 @@ export function CodeViewer({ content, filePath }: Props) {
           padding: '1rem',
           fontSize: '13px',
           lineHeight: '1.5',
-          height: '100%',
-          overflow: 'auto',
+          minHeight: '100%',
         }}
       >
         {content}
