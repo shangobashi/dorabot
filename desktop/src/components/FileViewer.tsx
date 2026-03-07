@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
-import { CodeViewer } from './viewers/CodeViewer';
-import { CodeEditor } from './viewers/CodeEditor';
+import { MonacoEditor } from './viewers/MonacoEditor';
 import { MarkdownViewer } from './viewers/MarkdownViewer';
 const PDFViewer = lazy(() => import('./viewers/PDFViewer').then(m => ({ default: m.PDFViewer })));
 import { ExcelViewer } from './viewers/ExcelViewer';
@@ -151,21 +150,29 @@ export function FileViewer({ filePath, rpc, onClose, headerless, onDirtyChange }
       return <div className="p-4 text-destructive text-xs">{error}</div>;
     }
 
-    if (editing && canEdit) {
-      return (
-        <CodeEditor
-          content={content}
-          filePath={filePath}
-          onSave={handleSave}
-          onDirtyChange={handleDirtyChange}
-        />
-      );
-    }
-
     switch (fileType) {
       case 'code':
-        return <CodeViewer content={content} filePath={filePath} />;
+        return (
+          <MonacoEditor
+            content={content}
+            filePath={filePath}
+            readOnly={!editing}
+            onSave={handleSave}
+            onDirtyChange={handleDirtyChange}
+          />
+        );
       case 'markdown':
+        if (editing) {
+          return (
+            <MonacoEditor
+              content={content}
+              filePath={filePath}
+              readOnly={false}
+              onSave={handleSave}
+              onDirtyChange={handleDirtyChange}
+            />
+          );
+        }
         return <MarkdownViewer content={content} />;
       case 'pdf':
         return <Suspense fallback={<div className="p-4 text-xs text-muted-foreground">Loading PDF viewer...</div>}><PDFViewer filePath={filePath} rpc={rpc} /></Suspense>;

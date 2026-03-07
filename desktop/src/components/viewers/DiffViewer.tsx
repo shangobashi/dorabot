@@ -1,10 +1,7 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { computeDiff, computeCharDiff, groupIntoHunks, type DiffLine } from '../../lib/diff';
-import type { HighlighterCore } from 'shiki/core';
-import { useTheme } from '../../hooks/useTheme';
 import { cn } from '@/lib/utils';
 import { ChevronDown, ChevronUp } from 'lucide-react';
-import { getHighlighter, getLanguage } from '../../lib/highlighter';
 
 type Props = {
   oldContent: string;
@@ -22,7 +19,6 @@ type Props = {
  * - Minimap bar on the right showing change locations
  */
 export function DiffViewer({ oldContent, newContent, filePath, contextLines = 3 }: Props) {
-  const { theme } = useTheme();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [currentChangeIdx, setCurrentChangeIdx] = useState(0);
 
