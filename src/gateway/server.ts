@@ -4870,27 +4870,34 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           const resolved = resolve(repoRoot);
           try {
             const { execFileSync } = await import('node:child_process');
-            // Working tree status (staged + unstaged)
-            const porcelain = execFileSync('git', ['status', '--porcelain', '-uall'], {
+            // Working tree status (staged + unstaged) using NUL-separated output
+            const raw = execFileSync('git', ['status', '--porcelain', '-z', '-uall'], {
               cwd: resolved, encoding: 'utf-8', timeout: 5000,
-            }).trim();
+            });
             const files: { path: string; status: string; staged: boolean }[] = [];
-            if (porcelain) {
-              for (const line of porcelain.split('\n')) {
-                const index = line[0];  // staged status
-                const wt = line[1];     // working tree status
-                const filePath = line.slice(3);
-                // Untracked files (??) only show as unstaged 'A'
-                if (index === '?' && wt === '?') {
+            if (raw) {
+              const entries = raw.split('\0').filter(Boolean);
+              let i = 0;
+              while (i < entries.length) {
+                const entry = entries[i];
+                // Each entry: XY<space>path (min 4 chars: 2 status + space + 1 char path)
+                if (entry.length < 4 || entry[2] !== ' ') { i++; continue; }
+                const ix = entry[0];   // index (staged) status
+                const wt = entry[1];   // worktree status
+                const filePath = entry.substring(3);
+                if (ix === '?' && wt === '?') {
                   files.push({ path: filePath, status: 'A', staged: false });
-                  continue;
+                } else {
+                  if (ix !== ' ' && ix !== '?') {
+                    files.push({ path: filePath, status: ix, staged: true });
+                  }
+                  if (wt !== ' ' && wt !== '?') {
+                    files.push({ path: filePath, status: wt, staged: false });
+                  }
                 }
-                if (index && index !== ' ' && index !== '?') {
-                  files.push({ path: filePath, status: index, staged: true });
-                }
-                if (wt && wt !== ' ' && wt !== '?') {
-                  files.push({ path: filePath, status: wt, staged: false });
-                }
+                // Renames/copies have a second path entry (the original path)
+                if (ix === 'R' || ix === 'C') i++;
+                i++;
               }
             }
             // Current branch
