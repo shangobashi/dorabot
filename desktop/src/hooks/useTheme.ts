@@ -107,6 +107,8 @@ export function useTheme() {
       setPalette(t === 'dark' ? 'sage-dark' : 'sage-light');
     } else if (family === 'ocean') {
       setPalette(t === 'dark' ? 'ocean-dark' : 'ocean-light');
+    } else if (family === 'sand') {
+      setPalette(t === 'dark' ? 'sand-dark' : 'sand-light');
     } else {
       setPalette(t === 'dark' ? 'berry-dark' : 'berry-light');
     }

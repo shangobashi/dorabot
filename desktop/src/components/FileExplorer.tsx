@@ -7,7 +7,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils';
 import {
   Folder, File, ChevronRight, ChevronDown, FolderPlus, Pencil, Trash2,
-  GitBranch, Plus, Minus, FileEdit, RefreshCw, ArrowDownToLine,
+  GitBranch, Plus, Minus, FileEdit, RefreshCw, ArrowDownToLine, ArrowUpToLine,
   Check, ChevronUp, Undo2, RotateCcw,
 } from 'lucide-react';
 
@@ -135,6 +135,7 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh }: {
   const [committing, setCommitting] = useState(false);
   const [fetching, setFetching] = useState(false);
   const [pulling, setPulling] = useState(false);
+  const [pushing, setPushing] = useState(false);
   const [showBranchPicker, setShowBranchPicker] = useState(false);
   const [branches, setBranches] = useState<GitBranchInfo[]>([]);
   const [branchFilter, setBranchFilter] = useState('');
@@ -147,6 +148,8 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh }: {
 
   const staged = gitState.files.filter(f => f.staged);
   const unstaged = gitState.files.filter(f => !f.staged);
+  const hasAhead = gitState.ahead > 0;
+  const hasBehind = gitState.behind > 0;
 
   const loadBranches = useCallback(async () => {
     try {
@@ -208,6 +211,19 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh }: {
       setActionError(String(err));
     } finally {
       setPulling(false);
+    }
+  };
+
+  const handlePush = async () => {
+    setActionError('');
+    setPushing(true);
+    try {
+      await rpc('git.push', { path: gitState.root });
+      onRefresh();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPushing(false);
     }
   };
 
@@ -387,9 +403,18 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh }: {
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="sm" className="h-5 w-5 p-0 relative" onClick={handlePull} disabled={pulling}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn(
+                'h-5 w-5 p-0 relative transition-colors',
+                hasBehind && 'bg-warning/15 text-warning hover:bg-warning/25 hover:text-warning',
+              )}
+              onClick={handlePull}
+              disabled={pulling}
+            >
               <ArrowDownToLine className={cn('w-3 h-3', pulling && 'animate-pulse')} />
-              {gitState.behind > 0 && (
+              {hasBehind && (
                 <span className="absolute -top-0.5 -right-0.5 min-w-[12px] h-3 px-0.5 rounded-full bg-primary text-[8px] font-bold text-primary-foreground flex items-center justify-center">
                   {gitState.behind}
                 </span>
@@ -397,7 +422,31 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh }: {
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom" className="text-[10px]">
-            {gitState.behind > 0 ? `Pull (${gitState.behind} behind)` : 'Pull'}
+            {hasBehind ? `Pull (${gitState.behind} behind)` : 'Pull'}
+          </TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn(
+                'h-5 w-5 p-0 relative transition-colors',
+                hasAhead && 'bg-success/15 text-success hover:bg-success/25 hover:text-success',
+              )}
+              onClick={handlePush}
+              disabled={pushing || !hasAhead}
+            >
+              <ArrowUpToLine className={cn('w-3 h-3', pushing && 'animate-pulse')} />
+              {hasAhead && (
+                <span className="absolute -top-0.5 -right-0.5 min-w-[12px] h-3 px-0.5 rounded-full bg-primary text-[8px] font-bold text-primary-foreground flex items-center justify-center">
+                  {gitState.ahead}
+                </span>
+              )}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="text-[10px]">
+            {hasAhead ? `Push (${gitState.ahead} ahead)` : 'Push'}
           </TooltipContent>
         </Tooltip>
       </div>
@@ -410,13 +459,25 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh }: {
         >
           <GitBranch className="w-3 h-3 shrink-0 text-primary" />
           <span className="truncate">{gitState.branch || 'HEAD (detached)'}</span>
-          {(gitState.ahead > 0 || gitState.behind > 0) && (
-            <span className="flex items-center gap-1 text-[10px] text-muted-foreground font-normal shrink-0">
-              {gitState.ahead > 0 && <span title={`${gitState.ahead} ahead of upstream`}>↑{gitState.ahead}</span>}
-              {gitState.behind > 0 && <span title={`${gitState.behind} behind upstream`}>↓{gitState.behind}</span>}
+          <span className="ml-auto flex items-center gap-1.5 shrink-0">
+            <span
+              className={cn(
+                'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[9px] font-mono',
+                hasBehind
+                  ? 'border-warning/40 bg-warning/10 text-warning'
+                  : hasAhead
+                    ? 'border-success/40 bg-success/10 text-success'
+                    : 'border-border/60 bg-secondary/40 text-muted-foreground',
+              )}
+              title={`ahead/behind: ${gitState.ahead}/${gitState.behind}`}
+            >
+              {hasAhead && <span>↑{gitState.ahead}</span>}
+              {hasBehind && <span>↓{gitState.behind}</span>}
+              {!hasAhead && !hasBehind && <span>synced</span>}
+              <span className="text-foreground/70">{gitState.ahead}/{gitState.behind}</span>
             </span>
-          )}
-          <ChevronDown className="w-3 h-3 shrink-0 ml-auto text-muted-foreground" />
+            <ChevronDown className="w-3 h-3 text-muted-foreground" />
+          </span>
         </button>
       </div>
 

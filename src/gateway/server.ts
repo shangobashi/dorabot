@@ -5022,6 +5022,21 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           }
         }
 
+        case 'git.push': {
+          const repoRoot = params?.path as string;
+          if (!repoRoot) return { id, error: 'path required' };
+          const resolved = resolve(repoRoot);
+          try {
+            const { execFileSync } = await import('node:child_process');
+            const output = execFileSync('git', ['push'], {
+              cwd: resolved, encoding: 'utf-8', timeout: 30000,
+            }).trim();
+            return { id, result: { output } };
+          } catch (err) {
+            return { id, error: err instanceof Error ? err.message : String(err) };
+          }
+        }
+
         case 'git.showFile': {
           const repoRoot = params?.path as string;
           const filePath = params?.file as string;

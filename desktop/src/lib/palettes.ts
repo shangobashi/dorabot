@@ -7,6 +7,8 @@ export type Palette =
   | 'sage-dark'
   | 'ocean-light'
   | 'ocean-dark'
+  | 'sand-light'
+  | 'sand-dark'
   | 'berry-light'
   | 'berry-dark';
 
@@ -24,10 +26,11 @@ const PAIRS: Record<string, [Palette, Palette]> = {
   mocha: ['mocha-light', 'mocha-dark'],
   sage: ['sage-light', 'sage-dark'],
   ocean: ['ocean-light', 'ocean-dark'],
+  sand: ['sand-light', 'sand-dark'],
   berry: ['berry-light', 'berry-dark'],
 };
 
-const DARK_SET = new Set<Palette>(['default-dark', 'mocha-dark', 'sage-dark', 'ocean-dark', 'berry-dark']);
+const DARK_SET = new Set<Palette>(['default-dark', 'mocha-dark', 'sage-dark', 'ocean-dark', 'sand-dark', 'berry-dark']);
 
 export const LEGACY_PALETTE_MAP: Record<string, Palette> = {
   'catppuccin-latte': 'mocha-light',
@@ -47,6 +50,7 @@ export function getFamily(p: Palette): string {
   if (p.startsWith('mocha')) return 'mocha';
   if (p.startsWith('sage')) return 'sage';
   if (p.startsWith('ocean')) return 'ocean';
+  if (p.startsWith('sand')) return 'sand';
   return 'berry';
 }
 
@@ -206,6 +210,44 @@ export const PALETTES: PaletteInfo[] = [
       blue: '#6f9cc8', magenta: '#8d8fc0', cyan: '#6faeb2', white: '#c4d3e6',
       brightBlack: '#495b72', brightRed: '#da928a', brightGreen: '#86b5a6', brightYellow: '#ceb67f',
       brightBlue: '#86b2dd', brightMagenta: '#a3a4d2', brightCyan: '#84c1c4', brightWhite: '#e7f0fb',
+    },
+  },
+  {
+    id: 'sand-light',
+    label: 'Sand Light',
+    family: 'sand',
+    isDark: false,
+    preview: { bg: '#f6f1e6', fg: '#4c4235', accent: '#b58a54', accent2: '#7f9b7a' },
+    terminal: {
+      background: '#f6f1e6',
+      foreground: '#4c4235',
+      cursor: '#b58a54',
+      cursorAccent: '#f6f1e6',
+      selectionBackground: '#e2d6c1',
+      selectionForeground: '#3f362b',
+      black: '#4a4034', red: '#ba7062', green: '#7d9a70', yellow: '#b5945b',
+      blue: '#7f93b0', magenta: '#9b84b0', cyan: '#6fa39f', white: '#ece4d6',
+      brightBlack: '#7b6f61', brightRed: '#cb8576', brightGreen: '#94ae87', brightYellow: '#c5a872',
+      brightBlue: '#97aac3', brightMagenta: '#b198c4', brightCyan: '#86b6b1', brightWhite: '#ffffff',
+    },
+  },
+  {
+    id: 'sand-dark',
+    label: 'Sand Dark',
+    family: 'sand',
+    isDark: true,
+    preview: { bg: '#17140f', fg: '#eee4d4', accent: '#d1aa74', accent2: '#98b28f' },
+    terminal: {
+      background: '#17140f',
+      foreground: '#eee4d4',
+      cursor: '#dfbc8b',
+      cursorAccent: '#17140f',
+      selectionBackground: '#382e22',
+      selectionForeground: '#f8f0e2',
+      black: '#18140f', red: '#cc8677', green: '#98b28f', yellow: '#d5b57b',
+      blue: '#9daec9', magenta: '#b59ece', cyan: '#8bbab5', white: '#dccfb9',
+      brightBlack: '#5d5142', brightRed: '#dc9a8c', brightGreen: '#adc4a4', brightYellow: '#e2c58f',
+      brightBlue: '#b2c1d8', brightMagenta: '#c8b5dc', brightCyan: '#a0cbc6', brightWhite: '#f8f0e2',
     },
   },
   {

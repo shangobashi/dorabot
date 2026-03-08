@@ -2,6 +2,7 @@ import { useRef, useCallback, useEffect, useMemo, useState } from 'react';
 import Editor, { loader, type OnMount } from '@monaco-editor/react';
 import type { editor as monacoEditor } from 'monaco-editor';
 import { useTheme } from '../../hooks/useTheme';
+import { getPalette } from '../../lib/palettes';
 
 // Use bundled monaco-editor directly (no CDN, works offline in Electron)
 import * as monaco from 'monaco-editor';
@@ -40,21 +41,6 @@ function getMonacoLanguage(filePath: string): string {
   return EXT_TO_LANG[ext] || 'plaintext';
 }
 
-function resolveColor(raw: string, fallback: string): string {
-  if (!raw) return fallback;
-  const probe = document.createElement('span');
-  probe.style.color = raw;
-  document.body.appendChild(probe);
-  const resolved = getComputedStyle(probe).color || fallback;
-  probe.remove();
-  return resolved;
-}
-
-function getCssVarColor(name: string, fallback: string): string {
-  const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  return resolveColor(raw, fallback);
-}
-
 type Props = {
   content: string;
   filePath: string;
@@ -86,13 +72,17 @@ export function MonacoEditor({ content, filePath, readOnly = false, onSave, onDi
     const defaultForeground = theme === 'dark' ? '#d4d4d4' : '#383a42';
 
     void loader.init().then((m) => {
-      const background = getCssVarColor('--background', defaultBackground);
-      const foreground = getCssVarColor('--foreground', defaultForeground);
-      const muted = getCssVarColor('--muted-foreground', theme === 'dark' ? '#808080' : '#6b7280');
-      const primary = getCssVarColor('--primary', theme === 'dark' ? '#7c9eff' : '#3b5bdb');
-      const secondary = getCssVarColor('--secondary', theme === 'dark' ? '#2a2a3a' : '#e5e7eb');
-      const border = getCssVarColor('--border', theme === 'dark' ? '#3f3f46' : '#d1d5db');
-      const popover = getCssVarColor('--popover', theme === 'dark' ? '#1f1f2a' : '#f8f8fa');
+      const paletteTheme = getPalette(palette);
+      const terminal = paletteTheme.terminal;
+      const background = terminal.background || defaultBackground;
+      const foreground = terminal.foreground || defaultForeground;
+      const muted = terminal.brightBlack || (theme === 'dark' ? '#808080' : '#6b7280');
+      const primary = terminal.blue || (theme === 'dark' ? '#7c9eff' : '#3b5bdb');
+      const secondary = terminal.selectionBackground || (theme === 'dark' ? '#2a2a3a' : '#e5e7eb');
+      const border = terminal.brightBlack || (theme === 'dark' ? '#3f3f46' : '#d1d5db');
+      const popover = theme === 'dark'
+        ? terminal.black || background
+        : terminal.white || background;
 
       m.editor.defineTheme(themeName, {
         base,
