@@ -710,7 +710,7 @@ export function ChatView({ gateway, chatItems, agentStatus, pendingQuestion, ses
   useEffect(() => {
     const el = landingRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(([e]) => setCompact(e.contentRect.height < 480));
+    const ro = new ResizeObserver(([e]) => setCompact(e.contentRect.height < 360));
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
