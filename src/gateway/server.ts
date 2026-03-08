@@ -2161,9 +2161,22 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
     const { prompt, images, sessionKey, source, channel, cwd, extraContext, messageMetadata } = params;
     console.log(`[gateway] agent run: source=${source} sessionKey=${sessionKey} prompt="${prompt.slice(0, 80)}..."`);
 
-    const providerAuth = await getProviderAuthGate();
-    if (!providerAuth.authenticated && providerAuth.providerName === 'claude' && providerAuth.reconnectRequired) {
-      console.log(`[gateway] ${providerAuth.providerName} auth expired pre-run, triggering re-auth for ${source}`);
+    let providerAuth = await getProviderAuthGate();
+    // If token expired, try silent refresh before falling back to interactive re-auth
+    if (!providerAuth.authenticated && (providerAuth.expired || providerAuth.reconnectRequired)) {
+      console.log(`[gateway] ${providerAuth.providerName} auth expired pre-run, attempting silent refresh for ${source}`);
+      const provider = await getProviderByName(providerAuth.providerName);
+      // getAuthStatus() calls ensureOAuthToken() which attempts refresh
+      // Clear cached auth first so it actually re-checks
+      if ('_cachedAuth' in provider) (provider as any)._cachedAuth = null;
+      const freshStatus = await provider.getAuthStatus();
+      if (freshStatus.authenticated) {
+        console.log(`[gateway] silent refresh succeeded for ${providerAuth.providerName}`);
+        providerAuth = { ...providerAuth, authenticated: true, reconnectRequired: false, expired: false };
+      }
+    }
+    if (!providerAuth.authenticated && providerAuth.reconnectRequired) {
+      console.log(`[gateway] ${providerAuth.providerName} silent refresh failed, triggering re-auth for ${source}`);
       await startReauthFlow({ prompt, sessionKey, source, channel, chatId: messageMetadata?.chatId, messageMetadata }).catch(() => {});
       return null;
     }
@@ -2757,8 +2770,20 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
         finishPlanRun(sessionKey, 'error', errMsg);
         finishTaskRun(sessionKey, 'error', errMsg);
         if (isAuthError(err)) {
-          console.log(`[gateway] auth error for ${source}, starting re-auth flow`);
-          await startReauthFlow({ prompt, sessionKey, source, channel, chatId: messageMetadata?.chatId, messageMetadata }).catch(() => {});
+          // Try silent refresh before falling back to interactive re-auth
+          console.log(`[gateway] auth error for ${source}, attempting silent token refresh`);
+          const provName = (config.provider?.name || 'claude') as ProviderName;
+          const prov = await getProviderByName(provName);
+          if ('_cachedAuth' in prov) (prov as any)._cachedAuth = null;
+          const freshStatus = await prov.getAuthStatus();
+          if (freshStatus.authenticated) {
+            console.log(`[gateway] silent refresh succeeded, retrying run for ${source}`);
+            // Re-queue the failed prompt so user doesn't have to resend
+            handleAgentRun(params).catch(() => {});
+          } else {
+            console.log(`[gateway] silent refresh failed for ${source}, starting interactive re-auth`);
+            await startReauthFlow({ prompt, sessionKey, source, channel, chatId: messageMetadata?.chatId, messageMetadata }).catch(() => {});
+          }
         }
         const errorEvent: WsEvent = {
           event: 'agent.error',
