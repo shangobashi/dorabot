@@ -1,4 +1,5 @@
 import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { messageTool } from './messaging.js';
 import { calendarTools } from './calendar.js';
 import { screenshotTool } from './screenshot.js';
@@ -30,7 +31,7 @@ export {
 export { loadResearch, saveResearch, type Research, type ResearchItem } from './research.js';
 
 // all custom tools for this agent
-const customTools = [
+export const customTools = [
   messageTool,
   screenshotTool,
   browserTool,
@@ -47,4 +48,21 @@ export function createAgentMcpServer() {
     version: '1.0.0',
     tools: customTools,
   });
+}
+
+export function createStandardMcpServer() {
+  const server = new McpServer({
+    name: 'dorabot-tools',
+    version: '1.0.0',
+  });
+
+  for (const sdkTool of customTools) {
+    server.registerTool(sdkTool.name, {
+      description: sdkTool.description,
+      inputSchema: sdkTool.inputSchema,
+      annotations: sdkTool.annotations,
+    }, async (args: any, extra: any) => sdkTool.handler(args as never, extra));
+  }
+
+  return server;
 }

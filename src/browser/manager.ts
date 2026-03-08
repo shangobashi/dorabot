@@ -43,7 +43,7 @@ function startIdleCheck(): void {
       return;
     }
     if (Date.now() - lastActivityAt > BROWSER_IDLE_TIMEOUT_MS) {
-      console.log('[browser] idle timeout reached, closing browser');
+      console.error('[browser] idle timeout reached, closing browser');
       await closeBrowser();
     }
   }, 60_000); // check every 60s
@@ -161,7 +161,7 @@ export async function launchBrowser(config: BrowserConfig = {}): Promise<void> {
       activePage = pages[0] || await context.newPage();
       touchBrowserActivity();
       startIdleCheck();
-      console.log(`[browser] connected to existing CDP on port ${existingPort}`);
+      console.error(`[browser] connected to existing CDP on port ${existingPort}`);
       return;
     } catch {
       // stale port file, continue to launch
@@ -170,7 +170,7 @@ export async function launchBrowser(config: BrowserConfig = {}): Promise<void> {
 
   // if browser is running without CDP, quit it first
   if (await isAppRunning(info.appName)) {
-    console.log(`[browser] ${info.appName} running without CDP, restarting with remote debugging...`);
+    console.error(`[browser] ${info.appName} running without CDP, restarting with remote debugging...`);
     await quitApp(info.appName);
   }
 
@@ -202,7 +202,7 @@ export async function launchBrowser(config: BrowserConfig = {}): Promise<void> {
   activePage = pages[0] || await context.newPage();
   touchBrowserActivity();
   startIdleCheck();
-  console.log(`[browser] launched ${info.appName} with CDP on port ${port}, profile: ${profileDir}`);
+  console.error(`[browser] launched ${info.appName} with CDP on port ${port}, profile: ${profileDir}`);
 }
 
 export async function connectToExisting(config: BrowserConfig = {}): Promise<void> {

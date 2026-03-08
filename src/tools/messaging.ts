@@ -22,14 +22,14 @@ export function getChannelHandler(channel: string): ChannelHandler | undefined {
 // console fallback handler
 const consoleHandler: ChannelHandler = {
   async send(target, message) {
-    console.log(`[${target}] ${message}`);
+    console.error(`[message:send:${target}] ${message}`);
     return { id: `console-${Date.now()}`, chatId: target };
   },
   async edit(messageId, message) {
-    console.log(`[edit ${messageId}] ${message}`);
+    console.error(`[message:edit:${messageId}] ${message}`);
   },
   async delete(messageId) {
-    console.log(`[delete ${messageId}]`);
+    console.error(`[message:delete:${messageId}]`);
   },
 };
 

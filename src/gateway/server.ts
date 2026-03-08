@@ -44,7 +44,7 @@ import {
 } from '../tools/tasks.js';
 import { loadResearch, saveResearch, readResearchContent, writeResearchFile, nextId as nextResearchId, type ResearchItem } from '../tools/research.js';
 import { getProvider, getProviderByName, disposeAllProviders } from '../providers/index.js';
-import { isClaudeInstalled, hasOAuthTokens, getApiKey as getClaudeApiKey, getActiveAuthMethod, isOAuthTokenExpired, onClaudeAuthRequired } from '../providers/claude.js';
+import { isClaudeInstalled, hasOAuthTokens, getApiKey as getClaudeApiKey, onClaudeAuthRequired } from '../providers/claude.js';
 import { isCodexInstalled, hasCodexAuth, onCodexAuthRequired } from '../providers/codex.js';
 import type { ProviderName } from '../config.js';
 import { randomUUID, randomBytes } from 'node:crypto';
@@ -2127,6 +2127,26 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
   const runQueues = new Map<string, Promise<void>>();
   const activeAbortControllers = new Map<string, AbortController>();
 
+  async function getProviderAuthGate(providerName = ((config.provider?.name || 'claude') as ProviderName)): Promise<{
+    providerName: ProviderName;
+    method: 'api_key' | 'oauth' | 'none';
+    expired: boolean;
+    reconnectRequired: boolean;
+    authenticated: boolean;
+    error?: string;
+  }> {
+    const provider = await getProviderByName(providerName);
+    const status = await provider.getAuthStatus();
+    return {
+      providerName,
+      method: status.authenticated ? (status.method || 'none') : 'none',
+      expired: status.reconnectRequired === true || status.tokenHealth === 'expired',
+      reconnectRequired: status.reconnectRequired === true,
+      authenticated: status.authenticated,
+      error: status.error,
+    };
+  }
+
   async function handleAgentRun(params: {
     prompt: string;
     images?: Array<{ data: string; mediaType: string }>;
@@ -2140,16 +2160,22 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
     const { prompt, images, sessionKey, source, channel, cwd, extraContext, messageMetadata } = params;
     console.log(`[gateway] agent run: source=${source} sessionKey=${sessionKey} prompt="${prompt.slice(0, 80)}..."`);
 
-    // pre-run auth check: if dorabot_oauth token is expired, don't waste a run
-    const authMethod = getActiveAuthMethod();
-    if (authMethod === 'dorabot_oauth' && isOAuthTokenExpired()) {
-      console.log(`[gateway] token expired pre-run, triggering re-auth for ${source}`);
+    const providerAuth = await getProviderAuthGate();
+    if (!providerAuth.authenticated && providerAuth.providerName === 'claude' && providerAuth.reconnectRequired) {
+      console.log(`[gateway] ${providerAuth.providerName} auth expired pre-run, triggering re-auth for ${source}`);
       await startReauthFlow({ prompt, sessionKey, source, channel, chatId: messageMetadata?.chatId, messageMetadata }).catch(() => {});
       return null;
     }
-    if (authMethod === 'none') {
-      console.log(`[gateway] no auth configured, skipping run for ${source}`);
-      broadcast({ event: 'agent.error', data: { source, sessionKey, error: 'Not authenticated', timestamp: Date.now() } });
+    if (!providerAuth.authenticated) {
+      const error = providerAuth.error || 'Not authenticated';
+      console.log(`[gateway] ${providerAuth.providerName} auth unavailable, skipping run for ${source}: ${error}`);
+      if (providerAuth.reconnectRequired) {
+        broadcast({
+          event: 'provider.auth_required',
+          data: { provider: providerAuth.providerName, reason: error, timestamp: Date.now() },
+        });
+      }
+      broadcast({ event: 'agent.error', data: { source, sessionKey, error, timestamp: Date.now() } });
       return null;
     }
 
@@ -4336,9 +4362,10 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
         }
 
         case 'provider.auth.method': {
+          const authGate = await getProviderAuthGate(((params?.provider as string) || config.provider.name || 'claude') as ProviderName);
           return { id, result: {
-            method: getActiveAuthMethod(),
-            expired: getActiveAuthMethod() === 'dorabot_oauth' ? isOAuthTokenExpired() : false,
+            method: authGate.method,
+            expired: authGate.expired,
           } };
         }
 

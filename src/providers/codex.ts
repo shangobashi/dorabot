@@ -1,16 +1,17 @@
 import { Codex } from '@openai/codex-sdk';
-import type { ModelReasoningEffort } from '@openai/codex-sdk';
+import type { Input, ModelReasoningEffort } from '@openai/codex-sdk';
 import { createServer, type Server } from 'node:http';
-import { execFile } from 'node:child_process';
+import { execFile, execSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
-import { mkdirSync, readFileSync, writeFileSync, existsSync, chmodSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync, chmodSync, unlinkSync } from 'node:fs';
 import { randomBytes, createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import type { Provider, ProviderRunOptions, ProviderMessage, ProviderAuthStatus, ProviderQueryResult } from './types.js';
 import type { ReasoningEffort, CodexMcpOauthCredentialsStore } from '../config.js';
-import { DORABOT_DIR, CODEX_OAUTH_PATH, OPENAI_KEY_PATH } from '../workspace.js';
+import { DORABOT_DIR, CODEX_OAUTH_PATH, OPENAI_KEY_PATH, TMP_DIR } from '../workspace.js';
 import { getSecretStorageBackend, keychainDelete, keychainLoad, keychainStore, type SecretStorageBackend } from '../auth/keychain.js';
+import { guardImages } from './image-guard.js';
 
 // ── OAuth constants (same client as Codex CLI) ──────────────────────
 const OAUTH_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
@@ -71,6 +72,186 @@ function findCodexBinary(): string {
 }
 
 const codexBinary = findCodexBinary();
+
+function resolveNodeBinary(): string {
+  if (!process.versions.electron && process.execPath) return process.execPath;
+
+  try {
+    const shell = process.env.SHELL || '/bin/zsh';
+    const resolved = execSync(`${shell} -lc 'command -v node'`, {
+      timeout: 5000,
+      encoding: 'utf-8',
+    }).trim();
+    if (resolved && existsSync(resolved)) return resolved;
+  } catch {
+    // fall through
+  }
+
+  return 'node';
+}
+
+function projectRoot(): string {
+  return join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+}
+
+function resolveTsxBinary(): string | null {
+  const local = join(projectRoot(), 'node_modules', '.bin', process.platform === 'win32' ? 'tsx.cmd' : 'tsx');
+  if (existsSync(local)) return local;
+
+  try {
+    const shell = process.env.SHELL || '/bin/zsh';
+    const resolved = execSync(`${shell} -lc 'command -v tsx'`, {
+      timeout: 5000,
+      encoding: 'utf-8',
+    }).trim();
+    return resolved || null;
+  } catch {
+    return null;
+  }
+}
+
+function pickMcpChildEnv(baseEnv: Record<string, string>): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const key of ['PATH', 'HOME', 'TMPDIR', 'SHELL', 'CODEX_HOME']) {
+    const value = baseEnv[key];
+    if (value) env[key] = value;
+  }
+  return env;
+}
+
+function getDorabotMcpServerSpec(baseEnv: Record<string, string>): { command: string; args: string[]; env: Record<string, string> } {
+  const providerDir = dirname(fileURLToPath(import.meta.url));
+  const builtServer = join(providerDir, '..', 'tools', 'mcp-stdio-server.js');
+  if (existsSync(builtServer)) {
+    return {
+      command: resolveNodeBinary(),
+      args: [builtServer],
+      env: pickMcpChildEnv(baseEnv),
+    };
+  }
+
+  const sourceServer = join(providerDir, '..', 'tools', 'mcp-stdio-server.ts');
+  const tsxBinary = resolveTsxBinary();
+  if (tsxBinary && existsSync(sourceServer)) {
+    return {
+      command: tsxBinary,
+      args: [sourceServer],
+      env: pickMcpChildEnv(baseEnv),
+    };
+  }
+
+  throw new Error('dorabot MCP stdio server entrypoint not found');
+}
+
+function normalizeMcpServerEnv(env: unknown): Record<string, string> | undefined {
+  if (!env || typeof env !== 'object') return undefined;
+
+  const normalized = Object.fromEntries(
+    Object.entries(env as Record<string, unknown>)
+      .filter(([, value]) => value !== undefined && value !== null)
+      .map(([key, value]) => [key, String(value)]),
+  );
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function normalizeCodexMcpServers(rawServers: unknown, baseEnv: Record<string, string>): Record<string, Record<string, unknown>> | undefined {
+  if (!rawServers || typeof rawServers !== 'object') return undefined;
+
+  const mcpServers: Record<string, Record<string, unknown>> = {};
+
+  for (const [name, rawConfig] of Object.entries(rawServers as Record<string, unknown>)) {
+    if (!rawConfig || typeof rawConfig !== 'object') continue;
+    const config = rawConfig as Record<string, unknown>;
+
+    if (name === 'dorabot-tools' || config.type === 'sdk' || 'instance' in config) {
+      mcpServers[name] = getDorabotMcpServerSpec(baseEnv);
+      continue;
+    }
+
+    if (typeof config.command === 'string') {
+      const args = Array.isArray(config.args)
+        ? config.args.filter((arg): arg is string => typeof arg === 'string')
+        : undefined;
+      const env = normalizeMcpServerEnv(config.env);
+      mcpServers[name] = {
+        command: config.command,
+        ...(args && args.length > 0 ? { args } : {}),
+        ...(env ? { env } : {}),
+      };
+      continue;
+    }
+
+    if (typeof config.url === 'string') {
+      mcpServers[name] = { url: config.url };
+    }
+  }
+
+  return Object.keys(mcpServers).length > 0 ? mcpServers : undefined;
+}
+
+function extensionForMediaType(mediaType: string): string {
+  switch (mediaType) {
+    case 'image/jpeg':
+      return 'jpg';
+    case 'image/png':
+      return 'png';
+    case 'image/gif':
+      return 'gif';
+    case 'image/webp':
+      return 'webp';
+    default:
+      return 'bin';
+  }
+}
+
+function stripDataUri(data: string): string {
+  return data.includes(',') ? data.split(',')[1] : data;
+}
+
+async function prepareCodexInput(prompt: string, images?: ProviderRunOptions['images']): Promise<{ input: Input; cleanup: () => void }> {
+  if (!images?.length) {
+    return { input: prompt, cleanup: () => {} };
+  }
+
+  mkdirSync(TMP_DIR, { recursive: true });
+
+  const { valid, warnings } = await guardImages(images);
+  const promptText = warnings.length
+    ? `${prompt}\n\n[Image warning: ${warnings.join('; ')}]`
+    : prompt;
+
+  if (!valid.length) {
+    return { input: promptText, cleanup: () => {} };
+  }
+
+  const tempPaths: string[] = [];
+  const input: Input = [{ type: 'text', text: promptText }];
+
+  try {
+    for (const image of valid) {
+      const ext = extensionForMediaType(image.mediaType);
+      const path = join(TMP_DIR, `codex-image-${Date.now()}-${randomBytes(6).toString('hex')}.${ext}`);
+      writeFileSync(path, Buffer.from(stripDataUri(image.data), 'base64'));
+      tempPaths.push(path);
+      input.push({ type: 'local_image', path });
+    }
+  } catch (err) {
+    for (const path of tempPaths) {
+      try { unlinkSync(path); } catch {}
+    }
+    throw err;
+  }
+
+  return {
+    input,
+    cleanup: () => {
+      for (const path of tempPaths) {
+        try { unlinkSync(path); } catch {}
+      }
+    },
+  };
+}
 
 function codexEnv(): Record<string, string> {
   const env: Record<string, string> = {};
@@ -676,7 +857,7 @@ export class CodexProvider implements Provider {
 
   async *query(opts: ProviderRunOptions): AsyncGenerator<ProviderMessage, ProviderQueryResult, unknown> {
     const codexConfig = opts.config.provider?.codex;
-    const model = codexConfig?.model || undefined;
+    const model = codexConfig?.model || 'gpt-5.4';
     const reasoningEffort = opts.config.reasoningEffort;
     // Default to file-backed MCP OAuth credentials to avoid repeated macOS keychain prompts
     // for "Codex MCP Credentials" during every non-interactive `codex exec` turn.
@@ -685,13 +866,21 @@ export class CodexProvider implements Provider {
     // Resolve API key (managed key > OAuth token > codex auth.json)
     const apiKey = await resolveCodexApiKey();
 
+    const sdkEnv = {
+      ...opts.env,
+      CODEX_HOME: codexHome(),
+    };
+    const mcpServers = normalizeCodexMcpServers(opts.mcpServer, sdkEnv);
+
     // Create SDK instance
     const codex = new Codex({
       apiKey,
+      env: sdkEnv,
       codexPathOverride: codexBinary !== 'codex' ? codexBinary : undefined,
       config: {
         mcp_oauth_credentials_store: mcpOauthCredentialsStore,
-      },
+        ...(mcpServers ? { mcp_servers: mcpServers } : {}),
+      } as any,
     });
 
     // Map reasoning effort
@@ -720,16 +909,13 @@ export class CodexProvider implements Provider {
       : opts.systemPrompt
         ? `<system_instructions>\n${opts.systemPrompt}\n</system_instructions>\n\n${opts.prompt}`
         : opts.prompt;
+    const { input, cleanup } = await prepareCodexInput(fullPrompt, opts.images);
 
     console.log(`[codex] ${opts.resumeId ? 'resuming' : 'starting'} thread: model=${model || 'default'} effort=${modelReasoningEffort || 'default'}${opts.resumeId ? ` threadId=${opts.resumeId}` : ''}`);
 
     // Run with streaming
     const abort = opts.abortController || new AbortController();
     this.activeAbort = abort;
-
-    const { events } = await thread.runStreamed(fullPrompt, {
-      signal: abort.signal,
-    });
 
     // Track state — seed sessionId from resumeId so it's set even if
     // the SDK doesn't emit thread.started on a resumed thread
@@ -746,6 +932,10 @@ export class CodexProvider implements Provider {
     const startedBlocks = new Set<string>();
 
     try {
+      const { events } = await thread.runStreamed(input, {
+        signal: abort.signal,
+      });
+
       for await (const event of events) {
         switch (event.type) {
           case 'thread.started': {
@@ -979,9 +1169,10 @@ export class CodexProvider implements Provider {
           session_id: sessionId,
         } as ProviderMessage;
       }
+    } finally {
+      this.activeAbort = null;
+      cleanup();
     }
-
-    this.activeAbort = null;
 
     return {
       result,
