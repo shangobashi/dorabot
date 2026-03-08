@@ -26,6 +26,13 @@ jobs:
         run: npm ci
         working-directory: desktop
 
+      - name: Security audit (root)
+        run: npm audit --audit-level=high
+
+      - name: Security audit (desktop)
+        run: npm audit --audit-level=high
+        working-directory: desktop
+
       - name: Sync desktop version
         run: |
           ROOT_VERSION=$(jq -r .version ../package.json)

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 
 type Props = {
   filePath: string;
@@ -21,28 +21,31 @@ export function ExcelViewer({ filePath, rpc }: Props) {
     setLoading(true);
     setError(null);
 
-    // read file as binary via RPC
     rpc('fs.readBinary', { path: filePath })
-      .then((res) => {
+      .then(async (res) => {
         const result = res as { content: string };
         const base64 = result.content;
 
-        // convert base64 to array buffer
+        // Convert base64 to ArrayBuffer
         const binaryString = atob(base64);
         const bytes = new Uint8Array(binaryString.length);
         for (let i = 0; i < binaryString.length; i++) {
           bytes[i] = binaryString.charCodeAt(i);
         }
 
-        // parse excel file
-        const workbook = XLSX.read(bytes, { type: 'array' });
-        const sheetData: SheetData[] = [];
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.load(bytes.buffer as ArrayBuffer);
 
-        for (const sheetName of workbook.SheetNames) {
-          const worksheet = workbook.Sheets[sheetName];
-          const data = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as (string | number)[][];
-          sheetData.push({ name: sheetName, data });
-        }
+        const sheetData: SheetData[] = [];
+        workbook.eachSheet((worksheet) => {
+          const data: (string | number)[][] = [];
+          worksheet.eachRow({ includeEmpty: false }, (row) => {
+            const rowValues = row.values as (string | number | null)[];
+            // ExcelJS row.values is 1-indexed (index 0 is empty), skip it
+            data.push(rowValues.slice(1).map(v => v == null ? '' : v));
+          });
+          sheetData.push({ name: worksheet.name, data });
+        });
 
         setSheets(sheetData);
         setActiveSheet(0);
