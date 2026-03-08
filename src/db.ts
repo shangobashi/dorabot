@@ -202,7 +202,7 @@ export function backfillFtsIndex(): void {
   d.exec('DROP TABLE IF EXISTS messages_fts');
   d.exec("CREATE VIRTUAL TABLE messages_fts USING fts5(text_content, content='', tokenize='porter unicode61')");
 
-  console.log('[db] backfilling FTS index...');
+  console.error('[db] backfilling FTS index...');
   const rows = d.prepare('SELECT id, content, type FROM messages WHERE type IN (\'user\', \'assistant\', \'result\') ORDER BY id').all() as { id: number; content: string; type: string }[];
 
   const insert = d.prepare('INSERT INTO messages_fts(rowid, text_content) VALUES (?, ?)');
@@ -214,7 +214,7 @@ export function backfillFtsIndex(): void {
       insert.run(row.id, text);
       indexed++;
     }
-    console.log(`[db] FTS backfill complete: ${indexed}/${rows.length} messages indexed`);
+    console.error(`[db] FTS backfill complete: ${indexed}/${rows.length} messages indexed`);
   });
   tx();
 }

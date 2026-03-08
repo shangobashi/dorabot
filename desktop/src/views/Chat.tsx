@@ -123,6 +123,7 @@ const ANTHROPIC_MODELS = [
 ];
 
 const OPENAI_MODELS = [
+  { value: 'gpt-5.4', label: 'gpt-5.4' },
   { value: 'gpt-5.3-codex', label: 'gpt-5.3 codex' },
   { value: 'gpt-5.2-codex', label: 'gpt-5.2 codex' },
   { value: 'gpt-5.1-codex-mini', label: 'gpt-5.1 mini' },
@@ -145,7 +146,7 @@ const EFFORT_LEVELS = [
 function ModelSelector({ gateway, disabled }: { gateway: ReturnType<typeof useGateway>; disabled: boolean }) {
   const providerName = (gateway.configData as any)?.provider?.name || 'claude';
   const claudeModel = gateway.model || 'claude-sonnet-4-5-20250929';
-  const codexModel = (gateway.configData as any)?.provider?.codex?.model || 'gpt-5.3-codex';
+  const codexModel = (gateway.configData as any)?.provider?.codex?.model || 'gpt-5.4';
   const currentValue = providerName === 'codex' ? `codex:${codexModel}` : `claude:${claudeModel}`;
 
   const handleChange = async (encoded: string) => {

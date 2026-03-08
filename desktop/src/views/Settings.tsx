@@ -308,6 +308,7 @@ const CLAUDE_MODELS = [
 ];
 
 const CODEX_MODELS = [
+  { value: 'gpt-5.4', label: 'gpt-5.4' },
   { value: 'gpt-5.3-codex', label: 'gpt-5.3-codex' },
   { value: 'gpt-5.2-codex', label: 'gpt-5.2-codex' },
   { value: 'gpt-5.1-codex-mini', label: 'gpt-5.1-codex-mini' },
@@ -465,7 +466,7 @@ function OpenAICard({ gateway, disabled }: { gateway: ReturnType<typeof useGatew
   const [showAuth, setShowAuth] = useState(false);
   const [authStatus, setAuthStatus] = useState<ProviderAuthView | null>(null);
   const cfg = gateway.configData as Record<string, any> | null;
-  const codexModel = cfg?.provider?.codex?.model || 'gpt-5.3-codex';
+  const codexModel = cfg?.provider?.codex?.model || 'gpt-5.4';
   const reasoningEffort = cfg?.reasoningEffort as string | null;
   const sandboxMode = cfg?.provider?.codex?.sandboxMode || 'danger-full-access';
   const approvalPolicy = cfg?.provider?.codex?.approvalPolicy || 'never';

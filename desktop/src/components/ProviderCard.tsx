@@ -59,6 +59,7 @@ export function ProviderCard({ gateway, disabled }: Props) {
   ];
 
   const codexModels = [
+    { value: 'gpt-5.4', label: 'gpt-5.4' },
     { value: 'gpt-5.3-codex', label: 'gpt-5.3-codex' },
     { value: 'gpt-5.2-codex', label: 'gpt-5.2-codex' },
     { value: 'gpt-5.1-codex-mini', label: 'gpt-5.1-codex-mini' },
@@ -173,7 +174,7 @@ export function ProviderCard({ gateway, disabled }: Props) {
             </SettingRow>
           ) : (
             <SettingRow label="model" description="codex model for agent runs">
-              <Select value={codexModel || 'gpt-5.3-codex'} onValueChange={handleCodexModelChange} disabled={disabled}>
+              <Select value={codexModel || 'gpt-5.4'} onValueChange={handleCodexModelChange} disabled={disabled}>
                 <SelectTrigger className="h-7 w-44 text-[11px]">
                   <SelectValue />
                 </SelectTrigger>

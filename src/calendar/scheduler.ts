@@ -389,7 +389,7 @@ export function migrateCronToCalendar(): void {
   }
 
   if (migrated > 0) {
-    console.log(`[calendar] migrated ${migrated} legacy cron jobs to calendar items`);
+    console.error(`[calendar] migrated ${migrated} legacy cron jobs to calendar items`);
   }
 }
 
@@ -464,6 +464,7 @@ export type AgentRunResult = {
 export function startScheduler(opts: {
   config: Config;
   tickIntervalMs?: number;
+  silent?: boolean;
   getContext?: () => SchedulerContext;
   onItemStart?: (item: CalendarItem) => void;
   onItemRun?: (item: CalendarItem, result: { status: string; result?: string; sessionId?: string; usage?: { inputTokens: number; outputTokens: number; totalCostUsd: number }; durationMs?: number; messaged?: boolean }) => void;
@@ -559,7 +560,9 @@ export function startScheduler(opts: {
   // immediate tick to catch up missed items
   tick();
 
-  console.log(`[calendar] started with ${items.length} items (tick: ${tickMs}ms)`);
+  if (!opts.silent) {
+    console.error(`[calendar] started with ${items.length} items (tick: ${tickMs}ms)`);
+  }
 
   return {
     stop: () => {
