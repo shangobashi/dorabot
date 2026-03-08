@@ -7,6 +7,7 @@ type ShortcutActions = {
   prevTab: () => void;
   focusTabByIndex: (index: number) => void;
   openQuickOpen: () => void;
+  previewMarkdown: () => void;
   toggleFiles: () => void;
   openSettings: () => void;
   focusInput: () => void;
@@ -89,6 +90,13 @@ export function useKeyboardShortcuts(actions: ShortcutActions, options: Shortcut
       if (e.key.toLowerCase() === 'p' && !e.shiftKey && !e.altKey) {
         e.preventDefault();
         actions.openQuickOpen();
+        return;
+      }
+
+      // Cmd+Shift+V — render markdown preview in active markdown tab
+      if (e.key.toLowerCase() === 'v' && e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        actions.previewMarkdown();
         return;
       }
 

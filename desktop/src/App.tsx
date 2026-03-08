@@ -105,6 +105,7 @@ const QUICK_OPEN_IGNORED_DIRS = new Set([
 ]);
 const QUICK_OPEN_MAX_FILES = 8000;
 const QUICK_OPEN_MAX_RESULTS = 120;
+const MARKDOWN_PREVIEW_EVENT = 'dorabot:markdown-preview';
 
 function joinPath(base: string, name: string): string {
   if (!base || base === '.') return `./${name}`;
@@ -705,6 +706,11 @@ export default function App() {
     prevTab: () => tabState.prevTab(),
     focusTabByIndex: (i: number) => tabState.focusTabByIndex(i),
     openQuickOpen: () => openQuickOpen(),
+    previewMarkdown: () => {
+      const tab = tabState.activeTab;
+      if (!tab || tab.type !== 'file' || !tab.filePath.toLowerCase().endsWith('.md')) return;
+      window.dispatchEvent(new CustomEvent(MARKDOWN_PREVIEW_EVENT, { detail: { filePath: tab.filePath } }));
+    },
     toggleFiles: () => setShowFiles(f => !f),
     openSettings: () => handleNavClick('settings'),
     openTerminal: () => tabState.openTerminalTab(),

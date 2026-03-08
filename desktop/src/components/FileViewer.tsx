@@ -10,6 +10,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { X, Pencil, Eye } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
+const MARKDOWN_PREVIEW_EVENT = 'dorabot:markdown-preview';
+
 type Props = {
   filePath: string;
   rpc: (method: string, params?: Record<string, unknown>) => Promise<unknown>;
@@ -133,6 +135,19 @@ export function FileViewer({ filePath, rpc, onClose, headerless, onDirtyChange }
       clearInterval(interval);
     };
   }, [filePath, rpc]);
+
+  // Cmd+Shift+V handler (dispatched by App): force markdown tabs into rendered preview mode.
+  useEffect(() => {
+    if (fileType !== 'markdown') return;
+    const onPreview = (event: Event) => {
+      const detail = (event as CustomEvent<{ filePath?: string }>).detail;
+      if (!detail?.filePath) return;
+      if (detail.filePath !== filePath) return;
+      setEditing(false);
+    };
+    window.addEventListener(MARKDOWN_PREVIEW_EVENT, onPreview as EventListener);
+    return () => window.removeEventListener(MARKDOWN_PREVIEW_EVENT, onPreview as EventListener);
+  }, [filePath, fileType]);
 
   const renderViewer = () => {
     if (loading) {
