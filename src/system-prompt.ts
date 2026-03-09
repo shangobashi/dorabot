@@ -2,7 +2,7 @@ import { hostname } from 'node:os';
 import type { Config } from './config.js';
 import type { Skill } from './skills/loader.js';
 import { type WorkspaceFiles, buildWorkspaceSection, WORKSPACE_DIR, MEMORIES_DIR, loadRecentMemories, getTodayMemoryDir } from './workspace.js';
-import { loadGoals, type Goal } from './tools/goals.js';
+import { loadProjects, type Project } from './tools/projects.js';
 import { loadTasks, type Task } from './tools/tasks.js';
 
 export type SystemPromptOptions = {
@@ -140,10 +140,10 @@ Write consistently. User shares facts or preferences → USER.md or MEMORY.md. D
 
   // goals + tasks pipeline
   try {
-    const goals = loadGoals();
-    const tasks = loadTasks();
-    const activeGoals = goals.goals.filter(g => g.status !== 'done');
-    const activeTasks = tasks.tasks.filter(t => t.status !== 'done' && t.status !== 'cancelled');
+    const projectState = loadProjects();
+    const taskState = loadTasks();
+    const activeProjects = projectState.projects.filter(p => p.status !== 'done');
+    const activeTasks = taskState.tasks.filter(t => t.status !== 'done' && t.status !== 'cancelled');
     const statusRank: Record<Task['status'], number> = {
       in_progress: 0,
       review: 1,
@@ -157,19 +157,19 @@ Write consistently. User shares facts or preferences → USER.md or MEMORY.md. D
       || a.createdAt.localeCompare(b.createdAt)
     ));
     const taskLines = sortedTasks.map(t => {
-      const project = t.goalId ? goals.goals.find(g => g.id === t.goalId)?.title : undefined;
+      const project = t.goalId ? projectState.projects.find(p => p.id === t.goalId)?.title : undefined;
       return `- #${t.id} [${t.status}] ${t.title}${project ? ` [project:${project}]` : ''}`;
     });
 
-    const goalRank: Record<Goal['status'], number> = {
+    const projectRank: Record<Project['status'], number> = {
       active: 0,
       paused: 1,
       done: 2,
     };
-    const goalLines = activeGoals
-      .sort((a, b) => goalRank[a.status] - goalRank[b.status] || a.createdAt.localeCompare(b.createdAt))
+    const projectLines = activeProjects
+      .sort((a, b) => projectRank[a.status] - projectRank[b.status] || a.createdAt.localeCompare(b.createdAt))
       .slice(0, 20)
-      .map(goal => `- #${goal.id} [${goal.status}] ${goal.title}`);
+      .map(p => `- #${p.id} [${p.status}] ${p.title}`);
 
     sections.push(`## Projects and Tasks
 
@@ -203,10 +203,10 @@ Schedule wake-ups (schedule tool) when there's something to come back to.`);
 
 ${taskLines.join('\n')}`);
     }
-    if (goalLines.length > 0) {
+    if (projectLines.length > 0) {
       sections.push(`## Active Projects
 
-${goalLines.join('\n')}`);
+${projectLines.join('\n')}`);
     }
   } catch {
     // goals/tasks not available, skip

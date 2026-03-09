@@ -16,7 +16,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import type { LucideIcon } from 'lucide-react';
 import type { TaskRun } from '../../hooks/useGateway';
-import type { Task, Goal, TaskStatus } from './helpers';
+import type { Task, Project, TaskStatus } from './helpers';
 import { KanbanColumn } from './KanbanColumn';
 
 export type ColumnId = 'todo' | 'in_progress' | 'review' | 'done';
@@ -54,45 +54,45 @@ export function getColumnForTask(task: Task, taskRuns: Record<string, TaskRun>):
 
 type Props = {
   tasks: Task[];
-  goals: Goal[];
+  projects: Project[];
   taskRuns: Record<string, TaskRun>;
   onTaskClick: (task: Task) => void;
   onCreateTask: (title: string, goalId?: string, status?: string) => void;
   onMoveTask: (taskId: string, toColumn: ColumnId, newGoalId?: string) => void;
-  onCreateGoal: (title: string, description?: string) => void;
-  onToggleGoalStatus: (goal: Goal) => void;
-  onCompleteGoal: (goal: Goal) => void;
-  onDeleteGoal: (goalId: string) => void;
+  onCreateProject: (title: string, description?: string) => void;
+  onToggleProjectStatus: (project: Project) => void;
+  onCompleteProject: (project: Project) => void;
+  onDeleteProject: (projectId: string) => void;
   busy?: string | null;
 };
 
 function ProjectHeader({
-  goal,
+  project,
   taskCount,
   doneCount,
   blockedCount,
-  onToggleGoalStatus,
-  onCompleteGoal,
-  onDeleteGoal,
+  onToggleProjectStatus,
+  onCompleteProject,
+  onDeleteProject,
 }: {
-  goal: Goal | null;
+  project: Project | null;
   taskCount: number;
   doneCount: number;
   blockedCount: number;
-  onToggleGoalStatus?: (goal: Goal) => void;
-  onCompleteGoal?: (goal: Goal) => void;
-  onDeleteGoal?: (goalId: string) => void;
+  onToggleProjectStatus?: (project: Project) => void;
+  onCompleteProject?: (project: Project) => void;
+  onDeleteProject?: (projectId: string) => void;
 }) {
   return (
     <div className="flex items-center gap-2 px-3 py-2.5 border-b border-border/30">
       <Target className="h-3.5 w-3.5 text-muted-foreground/50 shrink-0" />
       <div className="flex-1 min-w-0">
         <span className="text-[13px] font-medium">
-          {goal ? goal.title : 'Unassigned'}
+          {project ? project.title : 'Unassigned'}
         </span>
-        {goal?.description && (
+        {project?.description && (
           <span className="text-[11px] text-muted-foreground/50 ml-2">
-            {goal.description}
+            {project.description}
           </span>
         )}
       </div>
@@ -107,7 +107,7 @@ function ProjectHeader({
         <span>{doneCount}/{taskCount}</span>
       </div>
 
-      {goal && onToggleGoalStatus && onCompleteGoal && onDeleteGoal && (
+      {project && onToggleProjectStatus && onCompleteProject && onDeleteProject && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button type="button" className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground/30 hover:text-muted-foreground hover:bg-muted/50 transition-colors shrink-0">
@@ -115,24 +115,24 @@ function ProjectHeader({
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => onToggleGoalStatus(goal)}>
-              {goal.status === 'paused' ? (
+            <DropdownMenuItem onClick={() => onToggleProjectStatus(project)}>
+              {project.status === 'paused' ? (
                 <><Play className="mr-2 h-3.5 w-3.5" /> Resume</>
               ) : (
                 <><Pause className="mr-2 h-3.5 w-3.5" /> Pause</>
               )}
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => onCompleteGoal(goal)}>
+            <DropdownMenuItem onClick={() => onCompleteProject(project)}>
               <Check className="mr-2 h-3.5 w-3.5" /> Complete
             </DropdownMenuItem>
-            <DropdownMenuItem className="text-destructive" onClick={() => onDeleteGoal(goal.id)}>
+            <DropdownMenuItem className="text-destructive" onClick={() => onDeleteProject(project.id)}>
               <Trash2 className="mr-2 h-3.5 w-3.5" /> Delete
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       )}
 
-      {goal?.status === 'paused' && (
+      {project?.status === 'paused' && (
         <span className="text-[9px] text-amber-500/70 font-medium uppercase">paused</span>
       )}
     </div>
@@ -140,13 +140,13 @@ function ProjectHeader({
 }
 
 export function KanbanBoard({
-  tasks, goals, taskRuns,
-  onTaskClick, onCreateTask, onMoveTask, onCreateGoal,
-  onToggleGoalStatus, onCompleteGoal, onDeleteGoal,
+  tasks, projects, taskRuns,
+  onTaskClick, onCreateTask, onMoveTask, onCreateProject,
+  onToggleProjectStatus, onCompleteProject, onDeleteProject,
   busy,
 }: Props) {
-  const [showGoalForm, setShowGoalForm] = useState(false);
-  const [newGoalTitle, setNewGoalTitle] = useState('');
+  const [showProjectForm, setShowProjectForm] = useState(false);
+  const [newProjectTitle, setNewProjectTitle] = useState('');
   const [showArchive, setShowArchive] = useState(false);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
 
@@ -154,20 +154,20 @@ export function KanbanBoard({
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
   );
 
-  const activeGoals = useMemo(
-    () => goals.filter(g => g.status !== 'done').sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
-    [goals],
+  const activeProjects = useMemo(
+    () => projects.filter(p => p.status !== 'done').sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+    [projects],
   );
 
-  const doneGoals = useMemo(
-    () => goals.filter(g => g.status === 'done'),
-    [goals],
+  const doneProjects = useMemo(
+    () => projects.filter(p => p.status === 'done'),
+    [projects],
   );
 
-  const tasksByGoal = useMemo(() => {
+  const tasksByProject = useMemo(() => {
     const map = new Map<string, Task[]>();
     const orphan: Task[] = [];
-    for (const g of goals) map.set(g.id, []);
+    for (const p of projects) map.set(p.id, []);
     for (const t of tasks) {
       if (t.goalId && map.has(t.goalId)) {
         map.get(t.goalId)!.push(t);
@@ -176,7 +176,7 @@ export function KanbanBoard({
       }
     }
     return { map, orphan };
-  }, [tasks, goals]);
+  }, [tasks, projects]);
 
   const tasksById = useMemo(() => new Map(tasks.map(t => [t.id, t])), [tasks]);
 
@@ -193,7 +193,7 @@ export function KanbanBoard({
     const overId = over.id as string;
     const sepIdx = overId.indexOf(':');
     if (sepIdx === -1) return;
-    const targetGoalId = overId.slice(0, sepIdx) || undefined;
+    const targetProjectId = overId.slice(0, sepIdx) || undefined;
     const targetColumn = overId.slice(sepIdx + 1);
     if (!VALID_COLUMNS.has(targetColumn)) return;
 
@@ -202,25 +202,25 @@ export function KanbanBoard({
     if (!task) return;
 
     const currentColumn = getColumnForTask(task, taskRuns);
-    const goalChanged = (task.goalId || '') !== (targetGoalId || '');
-    if (currentColumn === targetColumn && !goalChanged) return;
+    const projectChanged = (task.goalId || '') !== (targetProjectId || '');
+    if (currentColumn === targetColumn && !projectChanged) return;
 
-    onMoveTask(taskId, targetColumn as ColumnId, targetGoalId);
+    onMoveTask(taskId, targetColumn as ColumnId, targetProjectId);
   };
 
-  const handleCreateGoal = () => {
-    const t = newGoalTitle.trim();
+  const handleCreateProject = () => {
+    const t = newProjectTitle.trim();
     if (!t) return;
-    onCreateGoal(t);
-    setNewGoalTitle('');
-    setShowGoalForm(false);
+    onCreateProject(t);
+    setNewProjectTitle('');
+    setShowProjectForm(false);
   };
 
-  const handleCreateInColumn = (title: string, columnId: ColumnId, goalId?: string) => {
-    onCreateTask(title, goalId, COLUMN_TO_STATUS[columnId]);
+  const handleCreateInColumn = (title: string, columnId: ColumnId, projectId?: string) => {
+    onCreateTask(title, projectId, COLUMN_TO_STATUS[columnId]);
   };
 
-  const renderProjectBoard = (goal: Goal | null, projectTasks: Task[]) => {
+  const renderProjectBoard = (project: Project | null, projectTasks: Task[]) => {
     const tasksByColumn = new Map<ColumnId, Task[]>();
     for (const col of COLUMNS) tasksByColumn.set(col.id, []);
     for (const task of projectTasks) {
@@ -233,18 +233,18 @@ export function KanbanBoard({
 
     const blockedCount = projectTasks.filter(t => t.status === 'blocked').length;
     const doneCount = projectTasks.filter(t => t.status === 'done').length;
-    const droppablePrefix = goal?.id || '';
+    const droppablePrefix = project?.id || '';
 
     return (
-      <div key={goal?.id || '__orphan'} className="rounded-lg border border-border/40 bg-card/30">
+      <div key={project?.id || '__orphan'} className="rounded-lg border border-border/40 bg-card/30">
         <ProjectHeader
-          goal={goal}
+          project={project}
           taskCount={projectTasks.length}
           doneCount={doneCount}
           blockedCount={blockedCount}
-          onToggleGoalStatus={goal ? onToggleGoalStatus : undefined}
-          onCompleteGoal={goal ? onCompleteGoal : undefined}
-          onDeleteGoal={goal ? onDeleteGoal : undefined}
+          onToggleProjectStatus={project ? onToggleProjectStatus : undefined}
+          onCompleteProject={project ? onCompleteProject : undefined}
+          onDeleteProject={project ? onDeleteProject : undefined}
         />
         <div className="flex overflow-x-auto p-1.5 gap-0">
           {COLUMNS.map(col => (
@@ -257,7 +257,7 @@ export function KanbanBoard({
               iconColor={col.iconColor}
               tasks={tasksByColumn.get(col.id) || []}
               onTaskClick={onTaskClick}
-              onCreateTask={(title) => handleCreateInColumn(title, col.id, goal?.id)}
+              onCreateTask={(title) => handleCreateInColumn(title, col.id, project?.id)}
             />
           ))}
         </div>
@@ -277,7 +277,7 @@ export function KanbanBoard({
             <button
               type="button"
               className="h-4 w-4 flex items-center justify-center rounded text-muted-foreground/30 hover:text-muted-foreground hover:bg-muted/50 transition-colors"
-              onClick={() => setShowGoalForm(v => !v)}
+              onClick={() => setShowProjectForm(v => !v)}
               title="New project"
             >
               <Plus className="h-2.5 w-2.5" />
@@ -285,33 +285,33 @@ export function KanbanBoard({
           </div>
 
           {/* new project form */}
-          {showGoalForm && (
+          {showProjectForm && (
             <div className="flex items-center gap-2">
               <Input
-                value={newGoalTitle}
-                onChange={e => setNewGoalTitle(e.target.value)}
+                value={newProjectTitle}
+                onChange={e => setNewProjectTitle(e.target.value)}
                 onKeyDown={e => {
-                  if (e.key === 'Enter') handleCreateGoal();
-                  if (e.key === 'Escape') { setShowGoalForm(false); setNewGoalTitle(''); }
+                  if (e.key === 'Enter') handleCreateProject();
+                  if (e.key === 'Escape') { setShowProjectForm(false); setNewProjectTitle(''); }
                 }}
                 placeholder="Project name..."
                 className="h-7 text-xs max-w-xs"
                 autoFocus
               />
-              <Button size="sm" className="h-7 text-xs" onClick={handleCreateGoal} disabled={!newGoalTitle.trim()}>
+              <Button size="sm" className="h-7 text-xs" onClick={handleCreateProject} disabled={!newProjectTitle.trim()}>
                 Create
               </Button>
             </div>
           )}
 
           {/* active project boards */}
-          {activeGoals.map(goal => renderProjectBoard(goal, tasksByGoal.map.get(goal.id) || []))}
+          {activeProjects.map(project => renderProjectBoard(project, tasksByProject.map.get(project.id) || []))}
 
           {/* orphan tasks */}
-          {tasksByGoal.orphan.length > 0 && renderProjectBoard(null, tasksByGoal.orphan)}
+          {tasksByProject.orphan.length > 0 && renderProjectBoard(null, tasksByProject.orphan)}
 
           {/* completed projects */}
-          {doneGoals.length > 0 && (
+          {doneProjects.length > 0 && (
             <div className="mt-2">
               <button
                 type="button"
@@ -319,16 +319,16 @@ export function KanbanBoard({
                 onClick={() => setShowArchive(v => !v)}
               >
                 <ChevronDown className={cn('h-3 w-3 transition-transform', !showArchive && '-rotate-90')} />
-                Completed ({doneGoals.length})
+                Completed ({doneProjects.length})
               </button>
               {showArchive && (
                 <div className="mt-1.5 space-y-1">
-                  {doneGoals.map(goal => (
-                    <div key={goal.id} className="rounded-md px-3 py-1.5 flex items-center gap-2 text-muted-foreground/40">
+                  {doneProjects.map(project => (
+                    <div key={project.id} className="rounded-md px-3 py-1.5 flex items-center gap-2 text-muted-foreground/40">
                       <CheckCircle2 className="h-3 w-3 text-emerald-500/30" />
-                      <span className="text-[11px]">{goal.title}</span>
+                      <span className="text-[11px]">{project.title}</span>
                       <span className="text-[10px] ml-auto">
-                        {(tasksByGoal.map.get(goal.id) || []).length} tasks
+                        {(tasksByProject.map.get(project.id) || []).length} tasks
                       </span>
                     </div>
                   ))}

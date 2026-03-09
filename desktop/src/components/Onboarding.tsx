@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { QRCodeSVG } from 'qrcode.react';
 import {
-  Check, Loader2, Monitor, Hand, ChevronRight, ChevronLeft,
+  Check, Loader2, Monitor, Hand, HardDrive, ChevronRight, ChevronLeft,
   MessageSquare, Sparkles, Brain, Zap, LayoutGrid, ArrowRight,
   Eye, EyeOff, Globe, User, Smartphone,
 } from 'lucide-react';
@@ -1060,6 +1060,13 @@ function InlineWhatsAppSetup({
 // ─── Permissions Step ─────────────────────────────────────────────
 
 const MAC_PERMISSIONS = [
+  {
+    id: 'full-disk-access',
+    label: 'Full Disk Access',
+    description: 'lets dorabot read and edit files, run git, and use the terminal',
+    icon: HardDrive,
+    settingsUrl: 'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles',
+  },
   {
     id: 'screen-recording',
     label: 'Screen Recording',

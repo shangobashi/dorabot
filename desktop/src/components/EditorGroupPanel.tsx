@@ -13,7 +13,7 @@ import { SoulView } from '../views/Soul';
 import { ExtensionsView } from '../views/Extensions';
 import { GoalsView } from '../views/Goals';
 import { ResearchView } from '../views/Research';
-import { TaskDetailView } from '../views/goals/TaskDetailView';
+import { TaskDetailView } from '../views/projects/TaskDetailView';
 import { FileViewer } from './FileViewer';
 import { DiffViewer } from './viewers/DiffViewer';
 import { ImageDiffViewer } from './viewers/ImageDiffViewer';

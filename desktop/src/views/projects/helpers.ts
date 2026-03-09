@@ -1,13 +1,13 @@
 import type { TaskRun } from '../../hooks/useGateway';
 
-export type GoalStatus = 'active' | 'paused' | 'done';
+export type ProjectStatus = 'active' | 'paused' | 'done';
 export type TaskStatus = 'todo' | 'in_progress' | 'review' | 'done' | 'blocked' | 'cancelled';
 
-export type Goal = {
+export type Project = {
   id: string;
   title: string;
   description?: string;
-  status: GoalStatus;
+  status: ProjectStatus;
   tags?: string[];
   reason?: string;
   createdAt: string;

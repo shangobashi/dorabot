@@ -3,9 +3,9 @@ import type { useGateway, TaskRun } from '../hooks/useGateway';
 import { toast } from 'sonner';
 import { Loader2, Target, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import type { Goal, Task, GoalStatus, TaskStatus } from './goals/helpers';
-import { errorText } from './goals/helpers';
-import { KanbanBoard, type ColumnId } from './goals/KanbanBoard';
+import type { Project, Task, ProjectStatus, TaskStatus } from './projects/helpers';
+import { errorText } from './projects/helpers';
+import { KanbanBoard, type ColumnId } from './projects/KanbanBoard';
 
 type Props = {
   gateway: ReturnType<typeof useGateway>;
@@ -16,7 +16,7 @@ type Props = {
 
 export function GoalsView({ gateway, onViewSession, onSetupChat, onOpenTask }: Props) {
   const [loading, setLoading] = useState(true);
-  const [goals, setGoals] = useState<Goal[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [saving, setSaving] = useState<string | null>(null);
 
@@ -25,11 +25,11 @@ export function GoalsView({ gateway, onViewSession, onSetupChat, onOpenTask }: P
   const load = useCallback(async () => {
     if (gateway.connectionState !== 'connected') return;
     try {
-      const [goalsRes, tasksRes] = await Promise.all([
+      const [projectsRes, tasksRes] = await Promise.all([
         gateway.rpc('projects.list'),
         gateway.rpc('tasks.list'),
       ]);
-      if (Array.isArray(goalsRes)) setGoals(goalsRes as Goal[]);
+      if (Array.isArray(projectsRes)) setProjects(projectsRes as Project[]);
       if (Array.isArray(tasksRes)) setTasks(tasksRes as Task[]);
     } catch (err) {
       toast.error('Failed to load projects', { description: errorText(err) });
@@ -39,7 +39,7 @@ export function GoalsView({ gateway, onViewSession, onSetupChat, onOpenTask }: P
   }, [gateway]);
 
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { if (!loading) void load(); }, [gateway.goalsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!loading) void load(); }, [gateway.projectsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const wrap = useCallback(async (key: string, fn: () => Promise<void>) => {
     setSaving(key);
@@ -48,28 +48,28 @@ export function GoalsView({ gateway, onViewSession, onSetupChat, onOpenTask }: P
     finally { setSaving(null); }
   }, [load]);
 
-  const createGoal = useCallback((title: string, description?: string) => {
-    void wrap('goal:create', async () => {
+  const createProject = useCallback((title: string, description?: string) => {
+    void wrap('project:create', async () => {
       await gateway.rpc('projects.add', { title, description });
     });
   }, [gateway, wrap]);
 
-  const toggleGoalStatus = useCallback((goal: Goal) => {
-    const next: GoalStatus = goal.status === 'paused' ? 'active' : 'paused';
-    void wrap(`goal:${goal.id}`, async () => {
-      await gateway.rpc('projects.update', { id: goal.id, status: next });
+  const toggleProjectStatus = useCallback((project: Project) => {
+    const next: ProjectStatus = project.status === 'paused' ? 'active' : 'paused';
+    void wrap(`project:${project.id}`, async () => {
+      await gateway.rpc('projects.update', { id: project.id, status: next });
     });
   }, [gateway, wrap]);
 
-  const completeGoal = useCallback((goal: Goal) => {
-    void wrap(`goal:${goal.id}`, async () => {
-      await gateway.rpc('projects.update', { id: goal.id, status: 'done' as GoalStatus });
+  const completeProject = useCallback((project: Project) => {
+    void wrap(`project:${project.id}`, async () => {
+      await gateway.rpc('projects.update', { id: project.id, status: 'done' as ProjectStatus });
     });
   }, [gateway, wrap]);
 
-  const deleteGoal = useCallback((goalId: string) => {
-    void wrap(`goal:delete:${goalId}`, async () => {
-      await gateway.rpc('projects.delete', { id: goalId });
+  const deleteProject = useCallback((projectId: string) => {
+    void wrap(`project:delete:${projectId}`, async () => {
+      await gateway.rpc('projects.delete', { id: projectId });
     });
   }, [gateway, wrap]);
 
@@ -120,7 +120,7 @@ export function GoalsView({ gateway, onViewSession, onSetupChat, onOpenTask }: P
     );
   }
 
-  const isEmpty = goals.length === 0 && tasks.length === 0;
+  const isEmpty = projects.length === 0 && tasks.length === 0;
 
   if (isEmpty) {
     return (
@@ -150,15 +150,15 @@ export function GoalsView({ gateway, onViewSession, onSetupChat, onOpenTask }: P
   return (
     <KanbanBoard
       tasks={tasks}
-      goals={goals}
+      projects={projects}
       taskRuns={taskRuns}
       onTaskClick={handleTaskClick}
       onCreateTask={createTask}
       onMoveTask={moveTask}
-      onCreateGoal={createGoal}
-      onToggleGoalStatus={toggleGoalStatus}
-      onCompleteGoal={completeGoal}
-      onDeleteGoal={deleteGoal}
+      onCreateProject={createProject}
+      onToggleProjectStatus={toggleProjectStatus}
+      onCompleteProject={completeProject}
+      onDeleteProject={deleteProject}
       busy={saving}
     />
   );

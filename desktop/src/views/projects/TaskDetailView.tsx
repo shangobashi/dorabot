@@ -15,7 +15,7 @@ import {
   Trash2, ExternalLink, X,
 } from 'lucide-react';
 import type { useGateway } from '../../hooks/useGateway';
-import type { Task, TaskLog, Goal, GoalStatus, TaskStatus } from './helpers';
+import type { Task, TaskLog, Project, ProjectStatus, TaskStatus } from './helpers';
 import { errorText } from './helpers';
 import { toast } from 'sonner';
 
@@ -45,7 +45,7 @@ function parseSessionKey(sessionKey?: string): { channel: string; chatType: stri
 
 export function TaskDetailView({ taskId, gateway, onViewSession, onClose }: Props) {
   const [task, setTask] = useState<Task | null>(null);
-  const [goals, setGoals] = useState<Goal[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [logs, setLogs] = useState<TaskLog[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -73,7 +73,7 @@ export function TaskDetailView({ taskId, gateway, onViewSession, onClose }: Prop
         setReason(t.reason || '');
         setResult(t.result || '');
       }
-      if (Array.isArray(goalsRes)) setGoals(goalsRes as Goal[]);
+      if (Array.isArray(goalsRes)) setProjects(goalsRes as Project[]);
       if (Array.isArray(logsRes)) setLogs(logsRes as TaskLog[]);
     } catch (err) {
       toast.error('Failed to load task', { description: errorText(err) });
@@ -248,8 +248,8 @@ export function TaskDetailView({ taskId, gateway, onViewSession, onClose }: Prop
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="__none">None</SelectItem>
-              {goals.filter(g => g.status !== 'done').map(g => (
-                <SelectItem key={g.id} value={g.id}>{g.title}</SelectItem>
+              {projects.filter(p => p.status !== 'done').map(p => (
+                <SelectItem key={p.id} value={p.id}>{p.title}</SelectItem>
               ))}
             </SelectContent>
           </Select>

@@ -2,7 +2,6 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'node:http';
 import { readdirSync, statSync, readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, renameSync, chmodSync, unlinkSync, watch, type FSWatcher } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
-import { execSync } from 'node:child_process';
 import * as nodePty from 'node-pty';
 import { resolve as pathResolve, join, dirname } from 'node:path';
 import { homedir } from 'node:os';
@@ -28,7 +27,7 @@ import { insertEvent, queryEventsBySessionCursor, deleteEventsUpToSeq, cleanupOl
 import { getChannelHandler } from '../tools/messaging.js';
 import { closeBrowser } from '../browser/manager.js';
 import { setScheduler } from '../tools/index.js';
-import { loadGoals, saveGoals, type Goal } from '../tools/goals.js';
+import { loadProjects, saveProjects, type Project } from '../tools/projects.js';
 import {
   loadTasks,
   saveTasks,
@@ -56,12 +55,10 @@ import {
   ensureWorkspace,
 } from '../workspace.js';
 
-function macNotify(title: string, body: string) {
-  try {
-    const t = title.replace(/"/g, '\\"');
-    const b = body.replace(/"/g, '\\"');
-    execSync(`osascript -e 'display notification "${b}" with title "${t}"'`, { stdio: 'ignore' });
-  } catch { /* ignore */ }
+// Notifications are handled by the desktop app via WebSocket broadcast events.
+// The old osascript approach triggered macOS TCC prompts on every call.
+function macNotify(_title: string, _body: string) {
+  // no-op: desktop picks up broadcast events and shows toasts/native notifications
 }
 
 // ── Tool status display maps ──────────────────────────────────────────
@@ -655,8 +652,8 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
     return m ? m[1] : null;
   }
 
-  function buildTaskExecutionPrompt(task: Task, goal?: Goal, mode: 'plan' | 'execute' = 'execute'): string {
-    const projectLine = goal ? `Project:\n#${goal.id} [${goal.status}] ${goal.title}\n${goal.description || ''}` : '';
+  function buildTaskExecutionPrompt(task: Task, project?: Project, mode: 'plan' | 'execute' = 'execute'): string {
+    const projectLine = project ? `Project:\n#${project.id} [${project.status}] ${project.title}\n${project.description || ''}` : '';
     const reasonLine = task.reason ? `Reason:\n${task.reason}` : '';
 
     if (mode === 'plan') {
@@ -1437,7 +1434,7 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           macNotify('Dora', 'Checking in... 👀');
           broadcast({ event: 'pulse:started', data: { timestamp: Date.now() } });
         } else {
-          macNotify('Dora', `Working on "${item.summary}"`);
+          broadcast({ event: 'schedule:started', data: { summary: item.summary, timestamp: Date.now() } });
         }
       },
       onItemRun: (item, result) => {
@@ -1694,18 +1691,17 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
     task.updatedAt = now;
     saveTasks(tasks);
 
-    const goals = loadGoals();
-    const goal = task.goalId ? goals.goals.find(g => g.id === task.goalId) : undefined;
-    const prompt = buildTaskExecutionPrompt(task, goal, mode);
+    const projectsState = loadProjects();
+    const project = task.goalId ? projectsState.projects.find(p => p.id === task.goalId) : undefined;
+    const prompt = buildTaskExecutionPrompt(task, project, mode);
 
     appendTaskLog(task.id, 'run_started', `Task ${mode === 'plan' ? 'planning' : 'started'}: ${task.title}`, { sessionKey, mode });
-    broadcast({ event: 'projects.update', data: { taskId: task.id, task } });
+    broadcast({ event: 'projects.update', data: { taskId: task.id, task, message: `Task started: ${task.title}` } });
     broadcast({
       event: 'tasks.log',
       data: { taskId: task.id, eventType: 'run_started', message: `Task started: ${task.title}`, timestamp: Date.now() },
     });
     markTaskRunStarted(taskId, sessionKey);
-    macNotify('Dora', `Task started: ${task.title}`);
     void sendTelegramOwnerStatus(`▶️ Task #${task.id} started: ${task.title}`);
 
     void handleAgentRun({
@@ -2500,12 +2496,10 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
                 || t?.startsWith('mcp__dorabot-tools__projects_')
                 || t?.startsWith('mcp__dorabot-tools__tasks_')
               ))) {
-                broadcast({ event: 'projects.update', data: {} });
-                macNotify('Dora', 'Projects/tasks updated');
+                broadcast({ event: 'projects.update', data: { message: 'Projects/tasks updated' } });
               }
               if (allTools.some(t => t?.startsWith('research_') || t?.startsWith('mcp__dorabot-tools__research_'))) {
-                broadcast({ event: 'research.update', data: {} });
-                macNotify('Dora', 'Research updated');
+                broadcast({ event: 'research.update', data: { message: 'Research updated' } });
               }
             }
 
@@ -3330,52 +3324,51 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
 
         case 'goals.list':
         case 'projects.list': {
-          const goals = loadGoals();
-          return { id, result: goals.goals };
+          const state = loadProjects();
+          return { id, result: state.projects };
         }
 
         case 'goals.add':
         case 'projects.add': {
           const title = (params?.title as string || '').trim();
           if (!title) return { id, error: 'title required' };
-          const goals = loadGoals();
+          const state = loadProjects();
           const now = new Date().toISOString();
-          const ids = goals.goals.map(g => Number.parseInt(g.id, 10)).filter(n => Number.isFinite(n));
-          const goal: Goal = {
+          const ids = state.projects.map(p => Number.parseInt(p.id, 10)).filter(n => Number.isFinite(n));
+          const project: Project = {
             id: String((ids.length ? Math.max(...ids) : 0) + 1),
             title,
             description: params?.description as string | undefined,
-            status: (params?.status as Goal['status']) || 'active',
+            status: (params?.status as Project['status']) || 'active',
             tags: (params?.tags as string[] | undefined) || [],
             reason: params?.reason as string | undefined,
             createdAt: now,
             updatedAt: now,
           };
-          goals.goals.push(goal);
-          saveGoals(goals);
-          broadcast({ event: 'projects.update', data: { projectId: goal.id, project: goal } });
-          macNotify('Dora', `Project created: ${goal.title}`);
-          return { id, result: goal };
+          state.projects.push(project);
+          saveProjects(state);
+          broadcast({ event: 'projects.update', data: { projectId: project.id, project, message: `Project created: ${project.title}` } });
+          return { id, result: project };
         }
 
         case 'goals.update':
         case 'projects.update': {
           const projectId = params?.id as string;
           if (!projectId) return { id, error: 'id required' };
-          const goals = loadGoals();
-          const goal = goals.goals.find(g => g.id === projectId);
-          if (!goal) return { id, error: 'project not found' };
+          const state = loadProjects();
+          const project = state.projects.find(p => p.id === projectId);
+          if (!project) return { id, error: 'project not found' };
 
-          if (params?.title !== undefined) goal.title = params.title as string;
-          if (params?.description !== undefined) goal.description = params.description as string;
-          if (params?.status !== undefined) goal.status = params.status as Goal['status'];
-          if (params?.tags !== undefined) goal.tags = params.tags as string[];
-          if (params?.reason !== undefined) goal.reason = params.reason as string;
-          goal.updatedAt = new Date().toISOString();
-          saveGoals(goals);
+          if (params?.title !== undefined) project.title = params.title as string;
+          if (params?.description !== undefined) project.description = params.description as string;
+          if (params?.status !== undefined) project.status = params.status as Project['status'];
+          if (params?.tags !== undefined) project.tags = params.tags as string[];
+          if (params?.reason !== undefined) project.reason = params.reason as string;
+          project.updatedAt = new Date().toISOString();
+          saveProjects(state);
 
           // when project is marked done, cancel pending tasks under it
-          if (goal.status === 'done') {
+          if (project.status === 'done') {
             const tasks = loadTasks();
             let changed = false;
             for (const task of tasks.tasks) {
@@ -3384,16 +3377,15 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
               if (task.status === 'in_progress') continue;
               task.status = 'cancelled';
               task.reason = 'project completed';
-              task.updatedAt = goal.updatedAt;
+              task.updatedAt = project.updatedAt;
               appendTaskLog(task.id, 'auto_cancelled', 'Cancelled: parent project marked done');
               changed = true;
             }
             if (changed) saveTasks(tasks);
           }
 
-          broadcast({ event: 'projects.update', data: { projectId: goal.id, project: goal } });
-          macNotify('Dora', `Project updated: ${goal.title}`);
-          return { id, result: goal };
+          broadcast({ event: 'projects.update', data: { projectId: project.id, project, message: `Project updated: ${project.title}` } });
+          return { id, result: project };
         }
 
         case 'goals.delete':
@@ -3401,11 +3393,11 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           const projectId = params?.id as string;
           if (!projectId) return { id, error: 'id required' };
 
-          const goals = loadGoals();
-          const before = goals.goals.length;
-          goals.goals = goals.goals.filter(g => g.id !== projectId);
-          if (goals.goals.length === before) return { id, error: 'project not found' };
-          saveGoals(goals);
+          const state = loadProjects();
+          const before = state.projects.length;
+          state.projects = state.projects.filter(p => p.id !== projectId);
+          if (state.projects.length === before) return { id, error: 'project not found' };
+          saveProjects(state);
 
           // unassign orphan tasks
           const tasks = loadTasks();
@@ -3419,8 +3411,7 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           }
           if (changed) saveTasks(tasks);
 
-          broadcast({ event: 'projects.update', data: { projectId, deleted: true } });
-          macNotify('Dora', `Project deleted: #${projectId}`);
+          broadcast({ event: 'projects.update', data: { projectId, deleted: true, message: `Project deleted: #${projectId}` } });
           return { id, result: { deleted: true } };
         }
 
@@ -3452,8 +3443,7 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           tasks.tasks.push(task);
           saveTasks(tasks);
           appendTaskLog(task.id, 'rpc_add', `Task created: ${task.title}`);
-          broadcast({ event: 'projects.update', data: { taskId: task.id, task } });
-          macNotify('Dora', `Task created: ${task.title}`);
+          broadcast({ event: 'projects.update', data: { taskId: task.id, task, message: `Task created: ${task.title}` } });
           return { id, result: task };
         }
 
@@ -3485,8 +3475,7 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
             status: task.status,
             goalId: task.goalId,
           });
-          broadcast({ event: 'projects.update', data: { taskId: task.id, task } });
-          macNotify('Dora', `Task updated: ${task.title}`);
+          broadcast({ event: 'projects.update', data: { taskId: task.id, task, message: `Task updated: ${task.title}` } });
 
           return { id, result: task };
         }
@@ -3501,8 +3490,7 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           saveTasks(tasks);
           activeTaskRuns.delete(taskId);
           appendTaskLog(taskId, 'rpc_delete', `Task #${taskId} deleted`);
-          broadcast({ event: 'projects.update', data: { taskId, deleted: true } });
-          macNotify('Dora', `Task deleted: #${taskId}`);
+          broadcast({ event: 'projects.update', data: { taskId, deleted: true, message: `Task deleted: #${taskId}` } });
           return { id, result: { deleted: true } };
         }
 
@@ -3589,8 +3577,7 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
             try { unlinkSync(oldPath); } catch {}
           }
           saveResearch(research);
-          broadcast({ event: 'research.update', data: {} });
-          macNotify('Dora', `Research updated: ${item.title}`);
+          broadcast({ event: 'research.update', data: { message: `Research updated: ${item.title}` } });
           return { id, result: item };
         }
 
@@ -3604,8 +3591,7 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           saveResearch(research);
           // clean up file
           try { if (existsSync(deleted.filePath)) unlinkSync(deleted.filePath); } catch {}
-          broadcast({ event: 'research.update', data: {} });
-          macNotify('Dora', `Research deleted: ${deleted.title}`);
+          broadcast({ event: 'research.update', data: { message: `Research deleted: ${deleted.title}` } });
           return { id, result: { deleted: true } };
         }
 

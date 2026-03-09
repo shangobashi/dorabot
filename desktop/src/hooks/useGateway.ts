@@ -164,8 +164,10 @@ export type NotifiableEvent =
   | { type: 'agent.result'; sessionKey: string; cost?: number }
   | { type: 'agent.error'; sessionKey: string; error: string }
   | { type: 'tool_approval'; toolName: string }
-  | { type: 'projects.update' }
-  | { type: 'research.update' }
+  | { type: 'projects.update'; message?: string }
+  | { type: 'research.update'; message?: string }
+  | { type: 'pulse.started' }
+  | { type: 'schedule.started'; summary: string }
   | { type: 'auth.required'; provider: string; reason: string }
   | { type: 'auth.reauth'; provider: string; authUrl: string; loginId?: string }
   | { type: 'whatsapp.status'; status: string }
@@ -465,7 +467,7 @@ export function useGateway() {
   const [telegramBotUsername, setTelegramBotUsername] = useState<string | null>(null);
   const [telegramLinkError, setTelegramLinkError] = useState<string | null>(null);
   const [providerInfo, setProviderInfo] = useState<{ name: string; auth: ProviderAuthInfo } | null>(null);
-  const [goalsVersion, setGoalsVersion] = useState(0);
+  const [projectsVersion, setProjectsVersion] = useState(0);
   const [taskRuns, setTaskRuns] = useState<Record<string, TaskRun>>({});
   const [taskLogsVersion, setTaskLogsVersion] = useState(0);
   const [researchVersion, setResearchVersion] = useState(0);
@@ -1213,8 +1215,9 @@ export function useGateway() {
       }
 
       case 'projects.update': {
-        setGoalsVersion(v => v + 1);
-        onNotifiableEventRef.current?.({ type: 'projects.update' });
+        setProjectsVersion(v => v + 1);
+        const pm = (data as { message?: string }).message;
+        onNotifiableEventRef.current?.({ type: 'projects.update', message: pm });
         break;
       }
 
@@ -1239,7 +1242,8 @@ export function useGateway() {
 
       case 'research.update': {
         setResearchVersion(v => v + 1);
-        onNotifiableEventRef.current?.({ type: 'research.update' });
+        const rm = (data as { message?: string }).message;
+        onNotifiableEventRef.current?.({ type: 'research.update', message: rm });
         break;
       }
 
@@ -1292,6 +1296,17 @@ export function useGateway() {
       case 'shell.data': {
         const d = data as { shellId: string; type: string; data?: string };
         shellEventListenersRef.current.forEach(listener => listener(d));
+        break;
+      }
+
+      case 'pulse:started': {
+        onNotifiableEventRef.current?.({ type: 'pulse.started' });
+        break;
+      }
+
+      case 'schedule:started': {
+        const d = data as { summary: string };
+        onNotifiableEventRef.current?.({ type: 'schedule.started', summary: d.summary });
         break;
       }
 
@@ -1910,7 +1925,7 @@ export function useGateway() {
     telegramLink,
     telegramUnlink,
     providerInfo,
-    goalsVersion,
+    projectsVersion,
     taskRuns,
     taskLogsVersion,
     researchVersion,

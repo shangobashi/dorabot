@@ -24,7 +24,7 @@ import {
   MessageSquare, Radio, Zap, Brain, Settings2,
   Sparkles, LayoutGrid, Loader2, Star,
   Clock, FileSearch, Plug, Folder, FolderOpen, X,
-  ShieldAlert, CalendarCheck, Target, FlaskConical, KeyRound, GitBranch, Check, Palette
+  ShieldAlert, CalendarCheck, Target, FlaskConical, KeyRound, GitBranch, Check, Palette, Play
 } from 'lucide-react';
 import { PALETTES } from './lib/palettes';
 import { ToastContainer } from './components/ToastContainer';
@@ -446,6 +446,25 @@ export default function App() {
           (window as any).electronAPI?.dockBounce?.('critical');
           playNotifSound();
           break;
+        case 'pulse.started':
+          toast('Checking in...', {
+            icon: <Play className="w-4 h-4 text-green-400" />,
+            duration: 4000,
+          });
+          if (!windowFocused) {
+            notify('checking in...');
+          }
+          break;
+        case 'schedule.started':
+          toast(`Working on "${event.summary}"`, {
+            icon: <Play className="w-4 h-4 text-blue-400" />,
+            duration: 5000,
+          });
+          if (!windowFocused) {
+            notify(`working on: ${event.summary}`);
+            playNotifSound();
+          }
+          break;
         case 'calendar':
           toast(event.summary, {
             icon: <CalendarCheck className="w-4 h-4 text-blue-400" />,
@@ -458,7 +477,7 @@ export default function App() {
           break;
         case 'projects.update':
           if (!allowPing('projects.update')) break;
-          toast('Projects updated', {
+          toast(event.message || 'Projects updated', {
             icon: <Target className="w-4 h-4 text-orange-400" />,
             duration: 4000,
             action: {
@@ -467,13 +486,13 @@ export default function App() {
             },
           });
           if (!windowFocused) {
-            notify('projects updated');
+            notify(event.message || 'projects updated');
             playNotifSound();
           }
           break;
         case 'research.update':
           if (!allowPing('research.update')) break;
-          toast('Research updated', {
+          toast(event.message || 'Research updated', {
             icon: <FlaskConical className="w-4 h-4 text-purple-400" />,
             duration: 4000,
             action: {
@@ -482,7 +501,7 @@ export default function App() {
             },
           });
           if (!windowFocused) {
-            notify('research updated');
+            notify(event.message || 'research updated');
             playNotifSound();
           }
           break;

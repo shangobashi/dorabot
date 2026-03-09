@@ -4,7 +4,7 @@ import { messageTool } from './messaging.js';
 import { calendarTools } from './calendar.js';
 import { screenshotTool } from './screenshot.js';
 import { browserTool } from './browser.js';
-import { projectsTools } from './goals.js';
+import { projectsTools } from './projects.js';
 import { tasksTools } from './tasks.js';
 import { researchTools } from './research.js';
 import { memoryTools } from './memory.js';
@@ -13,7 +13,7 @@ export { messageTool, registerChannelHandler, getChannelHandler, type ChannelHan
 export { setScheduler, getScheduler } from './calendar.js';
 export { screenshotTool } from './screenshot.js';
 export { browserTool, setBrowserConfig } from './browser.js';
-export { loadGoals, saveGoals, type Goal, type GoalStatus, type GoalsState } from './goals.js';
+export { loadProjects, saveProjects, type Project, type ProjectStatus, type ProjectsState } from './projects.js';
 export {
   loadTasks,
   saveTasks,
