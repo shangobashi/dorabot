@@ -28,7 +28,7 @@ export function isToolAllowed(
 
 // strip mcp__<server>__ prefix
 export function cleanToolName(name: string): string {
-  if (!name.startsWith('mcp__')) return name;
+  if (!name || !name.startsWith('mcp__')) return name || 'unknown';
   const idx = name.indexOf('__', 5);
   return idx >= 0 ? name.slice(idx + 2) : name;
 }

@@ -2343,7 +2343,7 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
             if (event.type === 'content_block_start') {
               const cb = event.content_block as Record<string, unknown>;
               if (cb?.type === 'tool_use') {
-                const toolName = cleanToolName(cb.name as string);
+                const toolName = cleanToolName((cb.name as string) || 'unknown');
                 // debug: log tool_use starts with their IDs
                 console.log(`[tool_use] name=${toolName} id=${cb.id} parent=${m.parent_tool_use_id || 'none'}`);
                 if (toolName === 'message') usedMessageTool = true;
@@ -2473,7 +2473,7 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
                 }
                 // broadcast tool_use for non-streaming providers and subagent messages
                 if ((!hadStreamEvents || isSubagentMsg) && b.type === 'tool_use') {
-                  const toolName = cleanToolName(b.name as string);
+                  const toolName = cleanToolName((b.name as string) || 'unknown');
                   if (toolName === 'message') usedMessageTool = true;
                   broadcast({
                     event: 'agent.tool_use',
