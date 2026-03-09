@@ -2290,9 +2290,11 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
             // track Task tool_use IDs
             if (evtType === 'content_block_start') {
               const cb = event.content_block as Record<string, unknown>;
-              const toolName = cleanToolName(cb.name as string);
-              if (cb?.type === 'tool_use' && (toolName === 'Task' || toolName === 'Agent')) {
-                taskToolUseIds.add(cb.id as string);
+              if (cb?.type === 'tool_use') {
+                const toolName = cleanToolName((cb.name as string) || 'unknown');
+                if (toolName === 'Task' || toolName === 'Agent') {
+                  taskToolUseIds.add(cb.id as string);
+                }
               }
             }
 
