@@ -23,6 +23,7 @@ import { getAllChannelStatuses } from '../channels/index.js';
 import { loginWhatsApp, logoutWhatsApp, isWhatsAppLinked } from '../channels/whatsapp/login.js';
 import { getDefaultAuthDir } from '../channels/whatsapp/session.js';
 import { validateTelegramToken } from '../channels/telegram/bot.js';
+import { getDb } from '../db.js';
 import { insertEvent, queryEventsBySessionCursor, deleteEventsUpToSeq, cleanupOldEvents } from './event-log.js';
 import { getChannelHandler } from '../tools/messaging.js';
 import { closeBrowser } from '../browser/manager.js';
@@ -422,6 +423,121 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
   const shellsByClient = new Map<WebSocket, Set<string>>();
   const orphanedShells = new Map<string, ReturnType<typeof setTimeout>>();
   const SHELL_ORPHAN_GRACE_MS = 60_000;
+
+  // --- Terminal scrollback ring buffer ---
+  const SHELL_SCROLLBACK_MAX = 256 * 1024; // 256 KB per shell
+  const SCROLLBACK_DIR = join(DORABOT_DIR, 'shells');
+  try { mkdirSync(SCROLLBACK_DIR, { recursive: true }); } catch {}
+
+  class ScrollbackBuffer {
+    private buf: Buffer;
+    private pos = 0;
+    private full = false;
+    constructor(private maxSize = SHELL_SCROLLBACK_MAX) { this.buf = Buffer.alloc(maxSize); }
+    write(data: string): void {
+      const bytes = Buffer.from(data, 'binary');
+      if (bytes.length >= this.maxSize) {
+        bytes.copy(this.buf, 0, bytes.length - this.maxSize);
+        this.pos = 0; this.full = true; return;
+      }
+      const space = this.maxSize - this.pos;
+      if (bytes.length <= space) {
+        bytes.copy(this.buf, this.pos);
+        this.pos += bytes.length;
+        if (this.pos === this.maxSize) { this.pos = 0; this.full = true; }
+      } else {
+        bytes.copy(this.buf, this.pos, 0, space);
+        bytes.copy(this.buf, 0, space);
+        this.pos = bytes.length - space;
+        this.full = true;
+      }
+    }
+    read(): Buffer {
+      if (!this.full) return Buffer.from(this.buf.subarray(0, this.pos));
+      return Buffer.concat([this.buf.subarray(this.pos), this.buf.subarray(0, this.pos)]);
+    }
+    toBase64(): string { return this.read().toString('base64'); }
+    get size(): number { return this.full ? this.maxSize : this.pos; }
+  }
+
+  const shellScrollbacks = new Map<string, ScrollbackBuffer>();
+  // map shellId -> sessionKey for tying terminals to sessions
+  const shellSessionKeys = new Map<string, string>();
+
+  // prevent path traversal via shellId (must be alphanumeric/dash/underscore only)
+  function isValidShellId(shellId: string): boolean {
+    return /^[a-zA-Z0-9_-]+$/.test(shellId);
+  }
+
+  function saveScrollbackToDisk(shellId: string): void {
+    if (!isValidShellId(shellId)) return;
+    const sb = shellScrollbacks.get(shellId);
+    if (!sb || sb.size === 0) return;
+    try {
+      writeFileSync(join(SCROLLBACK_DIR, `${shellId}.scrollback`), sb.read());
+      // save metadata (sessionKey association)
+      const sk = shellSessionKeys.get(shellId);
+      if (sk) writeFileSync(join(SCROLLBACK_DIR, `${shellId}.meta`), JSON.stringify({ sessionKey: sk, savedAt: Date.now() }));
+    } catch (err) {
+      console.error(`[gateway] failed to save scrollback for ${shellId}:`, err);
+    }
+  }
+
+  function loadScrollbackFromDisk(shellId: string): string | null {
+    if (!isValidShellId(shellId)) return null;
+    try {
+      const p = join(SCROLLBACK_DIR, `${shellId}.scrollback`);
+      if (existsSync(p)) return readFileSync(p).toString('base64');
+    } catch (err) {
+      console.error(`[gateway] failed to load scrollback for ${shellId}:`, err);
+    }
+    return null;
+  }
+
+  // prune old scrollback files (> 30 days)
+  try {
+    const now = Date.now();
+    const files = readdirSync(SCROLLBACK_DIR).filter(f => f.endsWith('.scrollback'));
+    for (const f of files) {
+      const fp = join(SCROLLBACK_DIR, f);
+      try {
+        const st = statSync(fp);
+        if (now - st.mtimeMs > 30 * 24 * 60 * 60 * 1000) {
+          unlinkSync(fp);
+          try { unlinkSync(fp.replace('.scrollback', '.meta')); } catch {}
+        }
+      } catch {}
+    }
+  } catch {}
+
+  // --- Session checkpoints (for fast cold-start recovery) ---
+  const checkpointDb = getDb(); // table created in db.ts init
+  const upsertCheckpointStmt = checkpointDb.prepare(
+    'INSERT INTO session_checkpoints (session_key, seq, created_at) VALUES (?, ?, unixepoch()) ON CONFLICT(session_key) DO UPDATE SET seq = ?, created_at = unixepoch()'
+  );
+  const getCheckpointStmt = checkpointDb.prepare('SELECT seq FROM session_checkpoints WHERE session_key = ?');
+  const getCheckpointsStmt = checkpointDb.prepare('SELECT session_key, seq FROM session_checkpoints WHERE session_key IN (SELECT value FROM json_each(?))');
+
+  function saveCheckpoint(sessionKey: string, seq: number): void {
+    try { upsertCheckpointStmt.run(sessionKey, seq, seq); } catch (err) {
+      console.error('[gateway] failed to save checkpoint:', err);
+    }
+  }
+
+  function getCheckpointSeq(sessionKey: string): number | null {
+    const row = getCheckpointStmt.get(sessionKey) as { seq: number } | undefined;
+    return row ? row.seq : null;
+  }
+
+  function getCheckpointSeqs(sessionKeys: string[]): Map<string, number> {
+    const map = new Map<string, number>();
+    if (sessionKeys.length === 0) return map;
+    try {
+      const rows = getCheckpointsStmt.all(JSON.stringify(sessionKeys)) as { session_key: string; seq: number }[];
+      for (const row of rows) map.set(row.session_key, row.seq);
+    } catch {}
+    return map;
+  }
   const FS_WATCH_DEBOUNCE_MS = 250;
   const DEBUG_FS_WATCH = process.env.DORABOT_DEBUG_FS_WATCH === '1';
 
@@ -2488,6 +2604,7 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
             broadcast(resultEvent);
             if (streamV2Enabled && typeof resultEvent.seq === 'number') {
               scheduleRunEventPrune(sessionKey, resultEvent.seq);
+              saveCheckpoint(sessionKey, resultEvent.seq);
             }
 
             // per-turn: broadcast goals/tasks updates if agent used planning tools
@@ -2616,6 +2733,7 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           broadcast(errorEvent);
           if (streamV2Enabled && typeof errorEvent.seq === 'number') {
             scheduleRunEventPrune(sessionKey, errorEvent.seq);
+            saveCheckpoint(sessionKey, errorEvent.seq);
           }
         }
       } finally {
@@ -2695,13 +2813,29 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
             state.lastSeen = Date.now();
           }
           // replay persisted events for exact continuity before snapshot/live stream
+          // Use checkpoint seqs for any session key that has no client-provided cursor,
+          // skipping already-incorporated events on cold start or partial reconnect.
+          const keysNeedingCheckpoint = keys.filter(sk => {
+            const perSessionSeq = Number(lastSeqBySession?.[sk]);
+            return !(Number.isFinite(perSessionSeq) && perSessionSeq > 0);
+          });
+          const checkpointSeqs = keysNeedingCheckpoint.length > 0
+            ? getCheckpointSeqs(keysNeedingCheckpoint)
+            : new Map<string, number>();
+
           let replayCount = 0;
           if (clientWs) {
             const replayStartedAt = Date.now();
             const cursorBySession = new Map<string, number>();
             for (const sk of keys) {
               const perSessionSeq = Number(lastSeqBySession?.[sk]);
-              cursorBySession.set(sk, Number.isFinite(perSessionSeq) ? perSessionSeq : lastSeq);
+              if (Number.isFinite(perSessionSeq) && perSessionSeq > 0) {
+                cursorBySession.set(sk, perSessionSeq);
+              } else if (checkpointSeqs.has(sk)) {
+                cursorBySession.set(sk, checkpointSeqs.get(sk)!);
+              } else {
+                cursorBySession.set(sk, lastSeq);
+              }
             }
 
             while (true) {
@@ -3056,6 +3190,13 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           }
 
           return { id, result: { resumed: true, key, sessionId, sdkSessionId: meta.sdkSessionId || null } };
+        }
+
+        case 'sessions.checkpoint.get': {
+          const sessionKey = params?.sessionKey as string;
+          if (!sessionKey) return { id, error: 'sessionKey required' };
+          const seq = getCheckpointSeq(sessionKey);
+          return { id, result: { sessionKey, seq } };
         }
 
         case 'channels.status': {
@@ -4623,7 +4764,9 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           const shellId = params?.shellId as string;
           const cols = (params?.cols as number) || 80;
           const rows = (params?.rows as number) || 24;
+          const shellSessionKey = params?.sessionKey as string | undefined;
           if (!shellId) return { id, error: 'shellId required' };
+          if (shellSessionKey) shellSessionKeys.set(shellId, shellSessionKey);
           if (shellProcesses.has(shellId)) {
             // reclaim orphaned shell if a new client is spawning with the same ID
             const orphanTimer = orphanedShells.get(shellId);
@@ -4637,7 +4780,10 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
               if (!shellsByClient.has(clientWs)) shellsByClient.set(clientWs, new Set());
               shellsByClient.get(clientWs)!.add(shellId);
             }
-            return { id, result: { spawned: true, reclaimed: true } };
+            // send scrollback buffer so client can restore terminal output
+            const sb = shellScrollbacks.get(shellId);
+            const scrollback = sb && sb.size > 0 ? sb.toBase64() : undefined;
+            return { id, result: { spawned: true, reclaimed: true, scrollback } };
           }
 
           const shell = process.env.SHELL || '/bin/zsh';
@@ -4656,17 +4802,25 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           });
 
           shellProcesses.set(shellId, pty);
+          shellScrollbacks.set(shellId, new ScrollbackBuffer());
           if (clientWs) {
             if (!shellsByClient.has(clientWs)) shellsByClient.set(clientWs, new Set());
             shellsByClient.get(clientWs)!.add(shellId);
           }
 
           pty.onData((data) => {
+            shellScrollbacks.get(shellId)?.write(data);
             broadcast({ event: 'shell.data', data: { shellId, type: 'data', data } });
           });
           pty.onExit(({ exitCode }) => {
+            // skip if shell was already cleaned up by shell.kill
+            if (!shellProcesses.has(shellId)) return;
+            saveScrollbackToDisk(shellId);
+            shellScrollbacks.delete(shellId);
+            shellSessionKeys.delete(shellId);
             shellProcesses.delete(shellId);
-            if (clientWs) shellsByClient.get(clientWs)?.delete(shellId);
+            // remove from all client shell sets (clientWs may be stale after refresh)
+            for (const [, shells] of shellsByClient) shells.delete(shellId);
             broadcast({ event: 'shell.data', data: { shellId, type: 'exit', code: exitCode } });
           });
 
@@ -4699,10 +4853,60 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           if (!shellId) return { id, error: 'shellId required' };
           const pty = shellProcesses.get(shellId);
           if (pty) {
+            saveScrollbackToDisk(shellId);
+            shellScrollbacks.delete(shellId);
+            shellSessionKeys.delete(shellId);
             pty.kill();
             shellProcesses.delete(shellId);
           }
+          // cancel any pending orphan timer
+          const orphanTimer = orphanedShells.get(shellId);
+          if (orphanTimer) { clearTimeout(orphanTimer); orphanedShells.delete(shellId); }
+          // remove from all client shell sets
+          for (const [, shells] of shellsByClient) shells.delete(shellId);
           return { id, result: { killed: true } };
+        }
+
+        case 'shell.scrollback': {
+          // Get saved scrollback from disk for a previous shell session
+          const shellId = params?.shellId as string;
+          if (!shellId) return { id, error: 'shellId required' };
+          if (!isValidShellId(shellId)) return { id, error: 'invalid shellId' };
+          // Check live buffer first, then disk
+          const liveSb = shellScrollbacks.get(shellId);
+          if (liveSb && liveSb.size > 0) {
+            return { id, result: { scrollback: liveSb.toBase64(), live: true } };
+          }
+          const saved = loadScrollbackFromDisk(shellId);
+          return { id, result: { scrollback: saved, live: false } };
+        }
+
+        case 'shell.list': {
+          // List active shells and saved scrollback files
+          const active = Array.from(shellProcesses.keys()).map(shellId => ({
+            shellId,
+            sessionKey: shellSessionKeys.get(shellId),
+            live: true,
+          }));
+          let saved: Array<{ shellId: string; sessionKey?: string; savedAt?: number }> = [];
+          try {
+            const files = readdirSync(SCROLLBACK_DIR).filter(f => f.endsWith('.scrollback'));
+            saved = files.map(f => {
+              const shellId = f.replace('.scrollback', '');
+              let sessionKey: string | undefined;
+              let savedAt: number | undefined;
+              try {
+                const metaPath = join(SCROLLBACK_DIR, `${shellId}.meta`);
+                if (existsSync(metaPath)) {
+                  const meta = JSON.parse(readFileSync(metaPath, 'utf-8'));
+                  sessionKey = meta.sessionKey;
+                  savedAt = meta.savedAt;
+                }
+              } catch {}
+              return { shellId, sessionKey, savedAt, live: false };
+            });
+          } catch {}
+          return { id, result: { active, saved } };
         }
 
         case 'tool.approve': {
@@ -5136,6 +5340,9 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           const pty = shellProcesses.get(shellId);
           if (pty) {
             console.log(`[gateway] killing orphaned shell ${shellId} (no reclaim within ${SHELL_ORPHAN_GRACE_MS / 1000}s)`);
+            saveScrollbackToDisk(shellId);
+            shellScrollbacks.delete(shellId);
+            shellSessionKeys.delete(shellId);
             pty.kill();
             shellProcesses.delete(shellId);
           }
@@ -5239,10 +5446,14 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
       fileWatchers.clear();
       watchedPathsByClient.clear();
 
-      // Kill all PTY processes
+      // Kill PTY processes first, then save scrollback buffers
       for (const [, timer] of orphanedShells) clearTimeout(timer);
       orphanedShells.clear();
       for (const [, pty] of shellProcesses) { try { pty.kill(); } catch { /* ignore */ } }
+      // save after kill so buffer includes all output up to termination
+      for (const [shellId] of shellScrollbacks) saveScrollbackToDisk(shellId);
+      shellScrollbacks.clear();
+      shellSessionKeys.clear();
       shellProcesses.clear();
       shellsByClient.clear();
 

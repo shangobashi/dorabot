@@ -108,6 +108,13 @@ export function getDb(): Database.Database {
       value TEXT
     );
 
+    -- checkpoint for fast cold-start recovery (skip full event replay)
+    CREATE TABLE IF NOT EXISTS session_checkpoints (
+      session_key TEXT PRIMARY KEY,
+      seq INTEGER NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
     -- FTS5 index for memory search over messages
     CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
       text_content,

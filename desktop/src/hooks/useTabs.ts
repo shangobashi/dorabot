@@ -102,21 +102,24 @@ function loadTabsFromStorage(): Tab[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw) as Tab[];
     if (!Array.isArray(parsed) || parsed.length === 0) return [];
-    return parsed.map((tab) => {
-      if ((tab as any).type === 'plans' || (tab as any).type === 'ideas' || (tab as any).type === 'roadmap') {
-        return {
-          ...(tab as any),
-          id: 'view:goals',
-          type: 'goals',
-          label: 'Projects',
-        } as Tab;
-      }
-      // Migrate old "Goals" label
-      if ((tab as any).type === 'goals' && (tab as any).label === 'Goals') {
-        return { ...tab, label: 'Projects' } as Tab;
-      }
-      return tab;
-    });
+    return parsed
+      // strip terminal tabs with empty shellId (can't restore shells across restarts)
+      .filter((tab) => !((tab as any).type === 'terminal' && !(tab as any).shellId))
+      .map((tab) => {
+        if ((tab as any).type === 'plans' || (tab as any).type === 'ideas' || (tab as any).type === 'roadmap') {
+          return {
+            ...(tab as any),
+            id: 'view:goals',
+            type: 'goals',
+            label: 'Projects',
+          } as Tab;
+        }
+        // Migrate old "Goals" label
+        if ((tab as any).type === 'goals' && (tab as any).label === 'Goals') {
+          return { ...tab, label: 'Projects' } as Tab;
+        }
+        return tab;
+      });
   } catch {
     return [];
   }
@@ -612,6 +615,33 @@ export function useTabs(gw: ReturnType<typeof useGateway>, layout: ReturnType<ty
     layout.addTabToGroup(id, groupId);
   }, [layout]);
 
+  const openSessionTab = useCallback((tab: ChatTab, groupId?: GroupId) => {
+    // Dedup inside updater to avoid stale-closure race on rapid double-click
+    let existingId: string | null = null;
+    setTabs(prev => {
+      const existing = prev.find(t =>
+        t.id === tab.id || (isChatTab(t) && tab.sessionId && (t as ChatTab).sessionId === tab.sessionId)
+      );
+      if (existing) {
+        existingId = existing.id;
+        return prev;
+      }
+      return [...prev, tab];
+    });
+    if (existingId) {
+      focusTab(existingId, groupId);
+      return;
+    }
+    gw.trackSession(tab.sessionKey);
+    setActiveTabId(tab.id);
+    layout.addTabToGroup(tab.id, groupId);
+    gw.setActiveSession(tab.sessionKey, tab.chatId);
+    // Load session history from server
+    if (tab.sessionId) {
+      gw.loadSessionIntoMap(tab.sessionId, tab.sessionKey, tab.chatId);
+    }
+  }, [focusTab, gw, layout]);
+
   const openTaskTab = useCallback((taskId: string, taskTitle: string, groupId?: GroupId) => {
     const id = `task:${taskId}`;
     const existing = tabs.find(t => t.id === id);
@@ -654,16 +684,17 @@ export function useTabs(gw: ReturnType<typeof useGateway>, layout: ReturnType<ty
     const group = layout.groups.find(g => g.id === gid);
     if (!group) return;
     const toClose = new Set(group.tabIds.filter(id => id !== tabId));
-    // Batch: remove all at once, then clean up gateway/shells
+    // Extract closing tabs inside updater, but do side effects after
+    let closingTabs: Tab[] = [];
     setTabs(prev => {
-      const closing = prev.filter(t => toClose.has(t.id) && t.closable);
-      for (const tab of closing) {
-        if (isChatTab(tab)) gw.untrackSession(tab.sessionKey);
-        if (isTerminalTab(tab)) gw.rpc('shell.kill', { shellId: tab.shellId }).catch(() => {});
-        layout.removeTabFromGroup(tab.id);
-      }
+      closingTabs = prev.filter(t => toClose.has(t.id) && t.closable);
       return prev.filter(t => !toClose.has(t.id) || !t.closable);
     });
+    for (const tab of closingTabs) {
+      if (isChatTab(tab)) gw.untrackSession(tab.sessionKey);
+      if (isTerminalTab(tab)) gw.rpc('shell.kill', { shellId: tab.shellId }).catch(() => {});
+      layout.removeTabFromGroup(tab.id);
+    }
     focusTab(tabId, gid);
   }, [layout, gw, focusTab]);
 
@@ -672,23 +703,27 @@ export function useTabs(gw: ReturnType<typeof useGateway>, layout: ReturnType<ty
     const group = layout.groups.find(g => g.id === gid);
     if (!group) return;
     const toClose = new Set(group.tabIds);
+    let closingTabs: Tab[] = [];
+    const fallback: { tab: ChatTab | null } = { tab: null };
     setTabs(prev => {
-      const closing = prev.filter(t => toClose.has(t.id) && t.closable);
-      for (const tab of closing) {
-        if (isChatTab(tab)) gw.untrackSession(tab.sessionKey);
-        if (isTerminalTab(tab)) gw.rpc('shell.kill', { shellId: tab.shellId }).catch(() => {});
-        layout.removeTabFromGroup(tab.id);
-      }
+      closingTabs = prev.filter(t => toClose.has(t.id) && t.closable);
       const remaining = prev.filter(t => !toClose.has(t.id) || !t.closable);
       if (remaining.length === 0) {
-        const fallback = makeDefaultChatTab();
-        gw.trackSession(fallback.sessionKey);
-        gw.setActiveSession(fallback.sessionKey, fallback.chatId);
-        layout.addTabToGroup(fallback.id, gid);
-        return [fallback];
+        fallback.tab = makeDefaultChatTab();
+        return [fallback.tab];
       }
       return remaining;
     });
+    for (const tab of closingTabs) {
+      if (isChatTab(tab)) gw.untrackSession(tab.sessionKey);
+      if (isTerminalTab(tab)) gw.rpc('shell.kill', { shellId: tab.shellId }).catch(() => {});
+      layout.removeTabFromGroup(tab.id);
+    }
+    if (fallback.tab) {
+      gw.trackSession(fallback.tab.sessionKey);
+      gw.setActiveSession(fallback.tab.sessionKey, fallback.tab.chatId);
+      layout.addTabToGroup(fallback.tab.id, gid);
+    }
   }, [layout, gw]);
 
   const closeTabsToRight = useCallback((tabId: string, groupId?: GroupId) => {
@@ -698,15 +733,16 @@ export function useTabs(gw: ReturnType<typeof useGateway>, layout: ReturnType<ty
     const idx = group.tabIds.indexOf(tabId);
     if (idx < 0) return;
     const toClose = new Set(group.tabIds.slice(idx + 1));
+    let closingTabs: Tab[] = [];
     setTabs(prev => {
-      const closing = prev.filter(t => toClose.has(t.id) && t.closable);
-      for (const tab of closing) {
-        if (isChatTab(tab)) gw.untrackSession(tab.sessionKey);
-        if (isTerminalTab(tab)) gw.rpc('shell.kill', { shellId: tab.shellId }).catch(() => {});
-        layout.removeTabFromGroup(tab.id);
-      }
+      closingTabs = prev.filter(t => toClose.has(t.id) && t.closable);
       return prev.filter(t => !toClose.has(t.id) || !t.closable);
     });
+    for (const tab of closingTabs) {
+      if (isChatTab(tab)) gw.untrackSession(tab.sessionKey);
+      if (isTerminalTab(tab)) gw.rpc('shell.kill', { shellId: tab.shellId }).catch(() => {});
+      layout.removeTabFromGroup(tab.id);
+    }
     focusTab(tabId, gid);
   }, [layout, gw, focusTab]);
 
@@ -796,6 +832,7 @@ export function useTabs(gw: ReturnType<typeof useGateway>, layout: ReturnType<ty
     openFileTab,
     openDiffTab,
     openTerminalTab,
+    openSessionTab,
     openTaskTab,
     newChatTab,
     unreadBySession,

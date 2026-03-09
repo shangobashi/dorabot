@@ -100,10 +100,20 @@ export function TerminalView({ shellId, cwd, rpc, onShellEvent, palette, focused
     if (!term || spawnedRef.current) return;
     spawnedRef.current = true;
 
-    // Spawn shell process
+    // Spawn shell process (may reclaim an orphaned shell with scrollback)
     const cols = term.cols;
     const rows = term.rows;
-    rpc('shell.spawn', { shellId, cols, rows, ...(cwd ? { cwd } : {}) }).then(() => {
+    rpc('shell.spawn', { shellId, cols, rows, ...(cwd ? { cwd } : {}) }).then((res) => {
+      const result = res as { spawned?: boolean; reclaimed?: boolean; scrollback?: string } | undefined;
+      // Restore scrollback buffer if shell was reclaimed (e.g. after page refresh)
+      if (result?.reclaimed && result?.scrollback) {
+        try {
+          const bytes = Uint8Array.from(atob(result.scrollback), c => c.charCodeAt(0));
+          term.write(bytes);
+        } catch (err) {
+          console.error('[TerminalView] failed to restore scrollback:', err);
+        }
+      }
       setConnected(true);
     }).catch((err) => {
       term.writeln(`\r\n\x1b[31mFailed to spawn shell: ${err}\x1b[0m\r\n`);

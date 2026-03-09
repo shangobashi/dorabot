@@ -1826,6 +1826,14 @@ export function useGateway() {
     return runs;
   }, [rpc]);
 
+  const refreshSessions = useCallback((list?: SessionInfo[]) => {
+    if (list) { setSessions(list); return; }
+    rpc('sessions.list').then((res) => {
+      const arr = res as SessionInfo[];
+      if (Array.isArray(arr)) setSessions(arr);
+    }).catch(() => {});
+  }, [rpc]);
+
   // --- Derived values from active session (backward compat) ---
 
   const activeState = sessionStates[activeSessionKey] || DEFAULT_SESSION_STATE;
@@ -1901,6 +1909,7 @@ export function useGateway() {
     channelMessages,
     channelStatuses,
     sessions,
+    refreshSessions,
     ws: null, // WebSocket is in main process now
     rpc,
     sendMessage,

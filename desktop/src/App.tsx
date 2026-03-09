@@ -12,6 +12,7 @@ import { TabDragOverlay } from './components/TabBar';
 import { FileExplorer } from './components/FileExplorer';
 import { OnboardingOverlay } from './components/Onboarding';
 import { GlobalSearch } from './components/GlobalSearch';
+import { SessionHistory } from './components/SessionHistory';
 import { ShortcutHelp } from './components/ShortcutHelp';
 import { DndContext, DragOverlay, PointerSensor, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
 import { cn } from '@/lib/utils';
@@ -235,7 +236,7 @@ function PalettePicker({ palette, glass, onPalette, onGlass }: {
 
 export default function App() {
   const [showFiles, setShowFiles] = useState(() => localStorage.getItem('dorabot:showFiles') === 'true');
-  const [sidebarView, setSidebarView] = useState<'files' | 'git'>(() => (localStorage.getItem('dorabot:sidebarView') as 'files' | 'git') || 'files');
+  const [sidebarView, setSidebarView] = useState<'files' | 'git' | 'history'>(() => (localStorage.getItem('dorabot:sidebarView') as 'files' | 'git' | 'history') || 'files');
   const filesPanelSize = useRef(localStorage.getItem('dorabot:filesPanelSize') || '30%');
   const fileExplorerStateRef = useRef<{ viewRoot: string; expanded: string[]; selectedPath: string | null }>({ viewRoot: '', expanded: [], selectedPath: null });
   const [sessionFilter, setSessionFilter] = useState<SessionFilter>('all');
@@ -1512,6 +1513,23 @@ export default function App() {
                   </TooltipTrigger>
                   <TooltipContent side="bottom" className="text-[10px]">Source Control</TooltipContent>
                 </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      className={cn(
+                        'rounded p-1.5 transition-colors',
+                        sidebarView === 'history'
+                          ? 'bg-secondary text-foreground'
+                          : 'text-muted-foreground hover:bg-secondary/50 hover:text-foreground'
+                      )}
+                      onClick={() => setSidebarView('history')}
+                      title="Session History"
+                    >
+                      <Clock className="w-3.5 h-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="text-[10px]">History</TooltipContent>
+                </Tooltip>
                 <span className="flex-1" />
                 <button
                   className="rounded p-1 text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
@@ -1522,19 +1540,61 @@ export default function App() {
                   <X className="w-3.5 h-3.5" />
                 </button>
               </div>
-              <FileExplorer
-                rpc={gw.rpc}
-                connected={gw.connectionState === 'connected'}
-                onFileClick={(path) => tabState.openFileTab(path)}
-                onOpenDiff={(opts) => tabState.openDiffTab(opts)}
-                onFileChange={gw.onFileChange}
-                onOpenTerminal={(cwd) => tabState.openTerminalTab(cwd)}
-                mode={sidebarView}
-                initialViewRoot={fileExplorerStateRef.current.viewRoot || undefined}
-                initialExpanded={fileExplorerStateRef.current.expanded}
-                initialSelectedPath={fileExplorerStateRef.current.selectedPath}
-                onStateChange={(s) => { fileExplorerStateRef.current = s; }}
-              />
+              {sidebarView === 'history' ? (
+                <SessionHistory
+                  sessions={gw.sessions}
+                  onOpenSession={(session) => {
+                    // Build correct sessionKey from session metadata (works for desktop, telegram, whatsapp)
+                    const channel = session.channel || 'desktop';
+                    const chatType = session.chatType || 'dm';
+                    const chatId = session.chatId || session.id;
+                    const sk = `${channel}:${chatType}:${chatId}`;
+                    // Check if already open in a tab
+                    const existing = tabState.tabs.find(t =>
+                      isChatTab(t) && ((t as any).sessionId === session.id || t.sessionKey === sk)
+                    );
+                    if (existing) {
+                      tabState.focusTab(existing.id);
+                      return;
+                    }
+                    // Open new chat tab and load session
+                    const tab = {
+                      id: `chat:${sk}`,
+                      type: 'chat' as const,
+                      label: session.preview || session.id.slice(0, 12),
+                      closable: true as const,
+                      chatId,
+                      sessionKey: sk,
+                      sessionId: session.id,
+                      channel,
+                    };
+                    tabState.openSessionTab(tab);
+                  }}
+                  onDeleteSession={async (sessionId) => {
+                    await gw.rpc('sessions.delete', { sessionId });
+                    gw.refreshSessions();
+                    // Close the tab if this session is currently open
+                    const openTab = tabState.tabs.find(t =>
+                      isChatTab(t) && (t as any).sessionId === sessionId
+                    );
+                    if (openTab) tabState.closeTab(openTab.id);
+                  }}
+                />
+              ) : (
+                <FileExplorer
+                  rpc={gw.rpc}
+                  connected={gw.connectionState === 'connected'}
+                  onFileClick={(path) => tabState.openFileTab(path)}
+                  onOpenDiff={(opts) => tabState.openDiffTab(opts)}
+                  onFileChange={gw.onFileChange}
+                  onOpenTerminal={(cwd) => tabState.openTerminalTab(cwd)}
+                  mode={sidebarView as 'files' | 'git'}
+                  initialViewRoot={fileExplorerStateRef.current.viewRoot || undefined}
+                  initialExpanded={fileExplorerStateRef.current.expanded}
+                  initialSelectedPath={fileExplorerStateRef.current.selectedPath}
+                  onStateChange={(s) => { fileExplorerStateRef.current = s; }}
+                />
+              )}
             </ResizablePanel>
           </>
         )}
