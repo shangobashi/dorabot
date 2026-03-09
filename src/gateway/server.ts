@@ -28,8 +28,6 @@ import { insertEvent, queryEventsBySessionCursor, deleteEventsUpToSeq, cleanupOl
 import { getChannelHandler } from '../tools/messaging.js';
 import { closeBrowser } from '../browser/manager.js';
 import { setScheduler } from '../tools/index.js';
-import { loadPlans, savePlans, type Plan, appendPlanLog, readPlanLogs, readPlanDoc, createPlanFromIdea } from '../tools/plans.js';
-import { loadIdeas, saveIdeas } from '../ideas/tools.js';
 import { loadGoals, saveGoals, type Goal } from '../tools/goals.js';
 import {
   loadTasks,
@@ -37,10 +35,6 @@ import {
   type Task,
   appendTaskLog,
   readTaskLogs,
-  ensureTaskPlanDoc,
-  readTaskPlanDoc,
-  writeTaskPlanDoc,
-  getTaskPlanPath,
 } from '../tools/tasks.js';
 import { loadResearch, saveResearch, readResearchContent, writeResearchFile, nextId as nextResearchId, type ResearchItem } from '../tools/research.js';
 import { getProvider, getProviderByName, disposeAllProviders } from '../providers/index.js';
@@ -51,7 +45,6 @@ import { buildProviderAuthGate, classifyAuthRecovery, type ProviderAuthGate } fr
 import { randomUUID, randomBytes } from 'node:crypto';
 import { classifyToolCall, cleanToolName, isToolAllowed, type Tier } from './tool-policy.js';
 import { AUTONOMOUS_SCHEDULE_ID, buildAutonomousCalendarItem, PULSE_INTERVALS, DEFAULT_PULSE_INTERVAL, pulseIntervalToRrule, rruleToPulseInterval } from '../autonomous.js';
-import { ensureWorktreeForPlan, getWorktreeStats, mergeWorktreeBranch, pushWorktreePr, removeWorktree } from '../worktree/manager.js';
 import {
   DORABOT_DIR,
   GATEWAY_SOCKET_PATH,
@@ -84,11 +77,8 @@ const TOOL_EMOJI: Record<string, string> = {
   screenshot: '📸', browser: '🌐',
   schedule: '⏰', list_schedule: '⏰',
   update_schedule: '⏰', cancel_schedule: '⏰',
-  goals_view: '🎯', goals_add: '🎯', goals_update: '🎯', goals_delete: '🎯',
+  projects_view: '📋', projects_add: '📋', projects_update: '📋', projects_delete: '📋',
   tasks_view: '✅', tasks_add: '✅', tasks_update: '✅', tasks_done: '✅', tasks_delete: '✅',
-  plan_view: '🎯', plan_add: '🎯', plan_update: '🎯', plan_start: '🎯',
-  plan_delete: '🎯',
-  ideas_view: '💡', ideas_add: '💡', ideas_update: '💡', ideas_delete: '💡', ideas_create_plan: '💡',
 };
 
 const TOOL_LABEL: Record<string, string> = {
@@ -100,10 +90,8 @@ const TOOL_LABEL: Record<string, string> = {
   screenshot: 'Took screenshot', browser: 'Browsed',
   schedule: 'Scheduled', list_schedule: 'Listed schedule',
   update_schedule: 'Updated schedule', cancel_schedule: 'Cancelled schedule',
-  goals_view: 'Checked goals', goals_add: 'Added goal', goals_update: 'Updated goal', goals_delete: 'Deleted goal',
+  projects_view: 'Checked projects', projects_add: 'Added project', projects_update: 'Updated project', projects_delete: 'Deleted project',
   tasks_view: 'Checked tasks', tasks_add: 'Added task', tasks_update: 'Updated task', tasks_done: 'Completed task', tasks_delete: 'Deleted task',
-  plan_view: 'Checked plans', plan_add: 'Added plan', plan_update: 'Updated plan', plan_start: 'Started plan', plan_delete: 'Deleted plan',
-  ideas_view: 'Checked ideas', ideas_add: 'Added idea', ideas_update: 'Updated idea', ideas_delete: 'Deleted idea', ideas_create_plan: 'Created plan from idea',
 };
 
 const TOOL_ACTIVE_LABEL: Record<string, string> = {
@@ -115,10 +103,8 @@ const TOOL_ACTIVE_LABEL: Record<string, string> = {
   screenshot: 'Taking screenshot', browser: 'Browsing',
   schedule: 'Scheduling', list_schedule: 'Listing schedule',
   update_schedule: 'Updating schedule', cancel_schedule: 'Cancelling schedule',
-  goals_view: 'Checking goals', goals_add: 'Adding goal', goals_update: 'Updating goal', goals_delete: 'Deleting goal',
+  projects_view: 'Checking projects', projects_add: 'Adding project', projects_update: 'Updating project', projects_delete: 'Deleting project',
   tasks_view: 'Checking tasks', tasks_add: 'Adding task', tasks_update: 'Updating task', tasks_done: 'Completing task', tasks_delete: 'Deleting task',
-  plan_view: 'Checking plans', plan_add: 'Adding plan', plan_update: 'Updating plan', plan_start: 'Starting plan', plan_delete: 'Deleting plan',
-  ideas_view: 'Checking ideas', ideas_add: 'Adding idea', ideas_update: 'Updating idea', ideas_delete: 'Deleting idea', ideas_create_plan: 'Creating plan from idea',
 };
 
 // Plural labels when multiple consecutive same-tool calls are grouped
@@ -579,8 +565,6 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
   const channelQuestionRefs = new Map<string, ChannelQuestionRef>();
   const MAX_CHANNEL_QUESTION_REFS = 2000;
   const QUESTION_LINK_WINDOW_MS = 45 * 60 * 1000;
-  const activePlanRuns = new Map<string, { sessionKey: string; startedAt: number }>();
-  const planRunBySession = new Map<string, string>();
   const activeTaskRuns = new Map<string, { sessionKey: string; startedAt: number }>();
   const taskRunBySession = new Map<string, string>();
   const runEventPruneTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -666,64 +650,33 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
     return source === `calendar/${AUTONOMOUS_SCHEDULE_ID}` || source.startsWith('plans/') || source.startsWith('tasks/');
   }
 
-  function extractPlanIdFromSource(source: string): string | null {
-    const m = source.match(/^plans\/([^/]+)$/);
-    return m ? m[1] : null;
-  }
-
   function extractTaskIdFromSource(source: string): string | null {
     const m = source.match(/^tasks\/([^/]+)$/);
     return m ? m[1] : null;
   }
 
-  function buildPlanExecutionPrompt(task: Plan, ideaContext?: string, planDoc?: string): string {
-    const tagLine = task.tags?.length ? `Tags: ${task.tags.join(', ')}` : '';
-    const descriptionLine = task.description ? `Description:\n${task.description}` : '';
-    const ideaLine = ideaContext ? `Idea context:\n${ideaContext}` : '';
-    const planDocLine = planDoc ? `plan.md:\n${planDoc}` : '';
-
-    return [
-      `Execute plan #${task.id}: ${task.title}`,
-      '',
-      descriptionLine,
-      ideaLine,
-      planDocLine,
-      tagLine,
-      '',
-      'Push this plan toward completion. Default to action, not narration.',
-      'Keep plan state current with plan_update as you work.',
-      'If blocked, ask the user. If no response, make a reasonable call and document it.',
-      'Mark done only when the objective is actually met. Otherwise leave progress notes and next steps.',
-    ].filter(Boolean).join('\n');
-  }
-
   function buildTaskExecutionPrompt(task: Task, goal?: Goal, mode: 'plan' | 'execute' = 'execute'): string {
-    const goalLine = goal ? `Goal:\n#${goal.id} [${goal.status}] ${goal.title}\n${goal.description || ''}` : '';
-    const planContent = readTaskPlanDoc(task);
-    const planLine = planContent ? `Plan:\n${planContent}` : '';
+    const projectLine = goal ? `Project:\n#${goal.id} [${goal.status}] ${goal.title}\n${goal.description || ''}` : '';
     const reasonLine = task.reason ? `Reason:\n${task.reason}` : '';
 
     if (mode === 'plan') {
       return [
         `Plan task #${task.id}: ${task.title}`,
         '',
-        goalLine,
-        planLine,
+        projectLine,
         reasonLine,
         '',
         'Research and write a detailed execution plan for this task.',
-        'Write the plan to the task PLAN.md using tasks_update with the plan param.',
+        'Store the plan as a research doc using research_add.',
         'Include: objective, steps, risks, validation criteria.',
-        'Do NOT execute the task — only plan.',
-        'When the plan is complete, set status to planned with tasks_update.',
+        'Do NOT execute the task, only plan.',
       ].filter(Boolean).join('\n');
     }
 
     return [
       `Execute task #${task.id}: ${task.title}`,
       '',
-      goalLine,
-      planLine,
+      projectLine,
       reasonLine,
       '',
       'Do concrete work, not status narration.',
@@ -731,59 +684,6 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
       'If blocked, set status=blocked and include a clear reason.',
       'Mark done only when the task objective is met.',
     ].filter(Boolean).join('\n');
-  }
-
-  function markPlanRunStarted(planId: string, sessionKey: string): void {
-    activePlanRuns.set(planId, { sessionKey, startedAt: Date.now() });
-    planRunBySession.set(sessionKey, planId);
-    broadcast({
-      event: 'plans.run',
-      data: { planId, sessionKey, status: 'started', timestamp: Date.now() },
-    });
-  }
-
-  function finishPlanRun(sessionKey: string, status: 'completed' | 'error', error?: string): void {
-    const planId = planRunBySession.get(sessionKey);
-    if (!planId) return;
-    const current = activePlanRuns.get(planId);
-    if (current?.sessionKey === sessionKey) activePlanRuns.delete(planId);
-    planRunBySession.delete(sessionKey);
-
-    const plans = loadPlans();
-    const plan = plans.tasks.find(p => p.id === planId);
-    if (plan) {
-      plan.runState = status === 'completed' ? 'idle' : 'failed';
-      plan.error = status === 'error' ? (error || 'Plan run failed') : undefined;
-      plan.updatedAt = new Date().toISOString();
-      if (status === 'completed') {
-        plan.status = 'done';
-        plan.completedAt = plan.updatedAt;
-      }
-      savePlans(plans);
-      appendPlanLog(plan.id, status === 'completed' ? 'run_completed' : 'run_error', status === 'completed' ? 'Plan run completed' : (error || 'Plan run failed'));
-      broadcast({ event: 'plans.update', data: { planId: plan.id, plan } });
-      broadcast({
-        event: 'plans.log',
-        data: {
-          planId: plan.id,
-          eventType: status === 'completed' ? 'run_completed' : 'run_error',
-          message: status === 'completed' ? 'Plan run completed' : (error || 'Plan run failed'),
-          timestamp: Date.now(),
-        },
-      });
-    }
-
-    broadcast({
-      event: 'plans.run',
-      data: { planId, sessionKey, status, timestamp: Date.now(), ...(error ? { error } : {}) },
-    });
-  }
-
-  function maybeMarkPlanRunFromSource(source: string, sessionKey: string): void {
-    const planId = extractPlanIdFromSource(source);
-    if (!planId) return;
-    if (planRunBySession.get(sessionKey) === planId) return;
-    markPlanRunStarted(planId, sessionKey);
   }
 
   function markTaskRunStarted(taskId: string, sessionKey: string): void {
@@ -816,7 +716,7 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
       }
       saveTasks(tasks);
       appendTaskLog(task.id, status === 'completed' ? 'run_completed' : 'run_error', status === 'completed' ? 'Task run completed' : (error || 'Task run failed'));
-      broadcast({ event: 'goals.update', data: { taskId: task.id, task } });
+      broadcast({ event: 'projects.update', data: { taskId: task.id, task } });
       broadcast({
         event: 'tasks.log',
         data: {
@@ -1787,8 +1687,6 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
     broadcastSessionUpdate(session.key);
 
     const now = new Date().toISOString();
-    ensureTaskPlanDoc(task, task.plan);
-    task.plan = readTaskPlanDoc(task);
     task.status = 'in_progress';
     task.reason = undefined;
     task.sessionKey = sessionKey;
@@ -1801,7 +1699,7 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
     const prompt = buildTaskExecutionPrompt(task, goal, mode);
 
     appendTaskLog(task.id, 'run_started', `Task ${mode === 'plan' ? 'planning' : 'started'}: ${task.title}`, { sessionKey, mode });
-    broadcast({ event: 'goals.update', data: { taskId: task.id, task } });
+    broadcast({ event: 'projects.update', data: { taskId: task.id, task } });
     broadcast({
       event: 'tasks.log',
       data: { taskId: task.id, eventType: 'run_started', message: `Task started: ${task.title}`, timestamp: Date.now() },
@@ -2132,7 +2030,6 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
 
     const run = prev.then(async () => {
       console.log(`[handleAgentRun] prev resolved, starting run for ${sessionKey}`);
-      maybeMarkPlanRunFromSource(source, sessionKey);
       maybeMarkTaskRunFromSource(source, sessionKey);
       sessionRegistry.setActiveRun(sessionKey, true);
       if (channel) activeRunChannels.set(sessionKey, channel);
@@ -2250,14 +2147,14 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
                 timestamp: Date.now(),
               },
             });
-            broadcast({ event: 'goals.update', data: { taskId } });
+            broadcast({ event: 'projects.update', data: { taskId } });
           }
 
-          if (meta.name === 'goals_add' || meta.name === 'goals_update' || meta.name === 'goals_delete') {
-            const goalId = typeof meta.input.id === 'string'
+          if (meta.name === 'projects_add' || meta.name === 'projects_update' || meta.name === 'projects_delete') {
+            const projectId = typeof meta.input.id === 'string'
               ? meta.input.id
-              : toolResultText.match(/Goal #(\d+)/)?.[1];
-            broadcast({ event: 'goals.update', data: { goalId: goalId || undefined } });
+              : toolResultText.match(/Project #(\d+)/)?.[1];
+            broadcast({ event: 'projects.update', data: { projectId: projectId || undefined } });
           }
         };
 
@@ -2598,17 +2495,13 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
             if (tl) {
               const allTools = [...tl.completed.map(t => t.name), tl.current?.name].filter(Boolean);
               if (allTools.some(t => (
-                t?.startsWith('goals_')
+                t?.startsWith('projects_')
                 || t?.startsWith('tasks_')
-                || t?.startsWith('mcp__dorabot-tools__goals_')
+                || t?.startsWith('mcp__dorabot-tools__projects_')
                 || t?.startsWith('mcp__dorabot-tools__tasks_')
-                || t?.startsWith('plan_')
-                || t?.startsWith('ideas_')
-                || t?.startsWith('mcp__dorabot-tools__plan_')
-                || t?.startsWith('mcp__dorabot-tools__ideas_')
               ))) {
-                broadcast({ event: 'goals.update', data: {} });
-                macNotify('Dora', 'Goals/tasks updated');
+                broadcast({ event: 'projects.update', data: {} });
+                macNotify('Dora', 'Projects/tasks updated');
               }
               if (allTools.some(t => t?.startsWith('research_') || t?.startsWith('mcp__dorabot-tools__research_'))) {
                 broadcast({ event: 'research.update', data: {} });
@@ -2636,7 +2529,6 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
               }
             }
 
-            finishPlanRun(sessionKey, 'completed');
             finishTaskRun(sessionKey, 'completed');
 
             // per-turn: mark idle so sidebar spinner stops
@@ -2718,7 +2610,6 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           }
         }
         if (!suppressError) {
-          finishPlanRun(sessionKey, 'error', errMsg);
           finishTaskRun(sessionKey, 'error', errMsg);
           const errorEvent: WsEvent = {
             event: 'agent.error',
@@ -2752,9 +2643,6 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
         broadcastStatus(sessionKey, 'idle');
         broadcast({ event: 'status.update', data: { activeRun: false, source, sessionKey } });
         broadcastSessionUpdate(sessionKey);
-        if (planRunBySession.has(sessionKey)) {
-          finishPlanRun(sessionKey, 'error', 'run ended');
-        }
         if (taskRunBySession.has(sessionKey)) {
           finishTaskRun(sessionKey, 'error', 'run ended');
         }
@@ -3434,18 +3322,20 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
         case 'worktree.push_pr': {
           return {
             id,
-            error: 'deprecated API: plans/ideas/worktree has been removed, use goals.* and tasks.*',
+            error: 'deprecated API: plans/ideas/worktree has been removed, use projects.* and tasks.*',
           };
         }
 
         // ── Goals & Tasks ──
 
-        case 'goals.list': {
+        case 'goals.list':
+        case 'projects.list': {
           const goals = loadGoals();
           return { id, result: goals.goals };
         }
 
-        case 'goals.add': {
+        case 'goals.add':
+        case 'projects.add': {
           const title = (params?.title as string || '').trim();
           if (!title) return { id, error: 'title required' };
           const goals = loadGoals();
@@ -3463,17 +3353,18 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           };
           goals.goals.push(goal);
           saveGoals(goals);
-          broadcast({ event: 'goals.update', data: { goalId: goal.id, goal } });
-          macNotify('Dora', `Goal created: ${goal.title}`);
+          broadcast({ event: 'projects.update', data: { projectId: goal.id, project: goal } });
+          macNotify('Dora', `Project created: ${goal.title}`);
           return { id, result: goal };
         }
 
-        case 'goals.update': {
-          const goalId = params?.id as string;
-          if (!goalId) return { id, error: 'id required' };
+        case 'goals.update':
+        case 'projects.update': {
+          const projectId = params?.id as string;
+          if (!projectId) return { id, error: 'id required' };
           const goals = loadGoals();
-          const goal = goals.goals.find(g => g.id === goalId);
-          if (!goal) return { id, error: 'goal not found' };
+          const goal = goals.goals.find(g => g.id === projectId);
+          if (!goal) return { id, error: 'project not found' };
 
           if (params?.title !== undefined) goal.title = params.title as string;
           if (params?.description !== undefined) goal.description = params.description as string;
@@ -3483,43 +3374,44 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           goal.updatedAt = new Date().toISOString();
           saveGoals(goals);
 
-          // when goal is marked done, cancel pending tasks under it
+          // when project is marked done, cancel pending tasks under it
           if (goal.status === 'done') {
             const tasks = loadTasks();
             let changed = false;
             for (const task of tasks.tasks) {
-              if (task.goalId !== goalId) continue;
+              if (task.goalId !== projectId) continue;
               if (task.status === 'done' || task.status === 'cancelled') continue;
-              if (task.status === 'in_progress') continue; // don't cancel running tasks
+              if (task.status === 'in_progress') continue;
               task.status = 'cancelled';
-              task.reason = 'goal completed';
+              task.reason = 'project completed';
               task.updatedAt = goal.updatedAt;
-              appendTaskLog(task.id, 'auto_cancelled', 'Cancelled: parent goal marked done');
+              appendTaskLog(task.id, 'auto_cancelled', 'Cancelled: parent project marked done');
               changed = true;
             }
             if (changed) saveTasks(tasks);
           }
 
-          broadcast({ event: 'goals.update', data: { goalId: goal.id, goal } });
-          macNotify('Dora', `Goal updated: ${goal.title}`);
+          broadcast({ event: 'projects.update', data: { projectId: goal.id, project: goal } });
+          macNotify('Dora', `Project updated: ${goal.title}`);
           return { id, result: goal };
         }
 
-        case 'goals.delete': {
-          const goalId = params?.id as string;
-          if (!goalId) return { id, error: 'id required' };
+        case 'goals.delete':
+        case 'projects.delete': {
+          const projectId = params?.id as string;
+          if (!projectId) return { id, error: 'id required' };
 
           const goals = loadGoals();
           const before = goals.goals.length;
-          goals.goals = goals.goals.filter(g => g.id !== goalId);
-          if (goals.goals.length === before) return { id, error: 'goal not found' };
+          goals.goals = goals.goals.filter(g => g.id !== projectId);
+          if (goals.goals.length === before) return { id, error: 'project not found' };
           saveGoals(goals);
 
-          // keep orphan tasks valid if their goal is deleted
+          // unassign orphan tasks
           const tasks = loadTasks();
           let changed = false;
           for (const task of tasks.tasks) {
-            if (task.goalId === goalId) {
+            if (task.goalId === projectId) {
               task.goalId = undefined;
               task.updatedAt = new Date().toISOString();
               changed = true;
@@ -3527,8 +3419,8 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           }
           if (changed) saveTasks(tasks);
 
-          broadcast({ event: 'goals.update', data: { goalId, deleted: true } });
-          macNotify('Dora', `Goal deleted: #${goalId}`);
+          broadcast({ event: 'projects.update', data: { projectId, deleted: true } });
+          macNotify('Dora', `Project deleted: #${projectId}`);
           return { id, result: { deleted: true } };
         }
 
@@ -3550,22 +3442,17 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
             goalId: params?.goalId as string | undefined,
             title,
             status: normalizedStatus,
-            plan: params?.plan as string | undefined,
-            planDocPath: getTaskPlanPath(taskId),
             result: params?.result as string | undefined,
             reason: params?.reason as string | undefined,
             sessionId: params?.sessionId as string | undefined,
             sessionKey: params?.sessionKey as string | undefined,
             createdAt: now,
             updatedAt: now,
-            completedAt: undefined,
           };
-          ensureTaskPlanDoc(task, task.plan);
-          task.plan = readTaskPlanDoc(task);
           tasks.tasks.push(task);
           saveTasks(tasks);
           appendTaskLog(task.id, 'rpc_add', `Task created: ${task.title}`);
-          broadcast({ event: 'goals.update', data: { taskId: task.id, task } });
+          broadcast({ event: 'projects.update', data: { taskId: task.id, task } });
           macNotify('Dora', `Task created: ${task.title}`);
           return { id, result: task };
         }
@@ -3579,12 +3466,6 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
 
           if (params?.title !== undefined) task.title = params.title as string;
           if (params?.goalId !== undefined) task.goalId = (params.goalId as string) || undefined;
-          if (params?.plan !== undefined) {
-            writeTaskPlanDoc(task, params.plan as string);
-          } else {
-            ensureTaskPlanDoc(task, task.plan);
-            task.plan = readTaskPlanDoc(task);
-          }
           if (params?.result !== undefined) task.result = params.result as string;
           if (params?.reason !== undefined) task.reason = params.reason as string;
           if (params?.sessionId !== undefined) task.sessionId = params.sessionId as string;
@@ -3604,7 +3485,7 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
             status: task.status,
             goalId: task.goalId,
           });
-          broadcast({ event: 'goals.update', data: { taskId: task.id, task } });
+          broadcast({ event: 'projects.update', data: { taskId: task.id, task } });
           macNotify('Dora', `Task updated: ${task.title}`);
 
           return { id, result: task };
@@ -3620,7 +3501,7 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           saveTasks(tasks);
           activeTaskRuns.delete(taskId);
           appendTaskLog(taskId, 'rpc_delete', `Task #${taskId} deleted`);
-          broadcast({ event: 'goals.update', data: { taskId, deleted: true } });
+          broadcast({ event: 'projects.update', data: { taskId, deleted: true } });
           macNotify('Dora', `Task deleted: #${taskId}`);
           return { id, result: { deleted: true } };
         }
@@ -3630,51 +3511,6 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           if (!taskId) return { id, error: 'id required' };
           const limit = Number(params?.limit || 100);
           return { id, result: readTaskLogs(taskId, Math.min(Math.max(limit, 1), 500)) };
-        }
-
-        case 'tasks.plan.read': {
-          const taskId = params?.id as string;
-          if (!taskId) return { id, error: 'id required' };
-          const tasks = loadTasks();
-          const task = tasks.tasks.find(t => t.id === taskId);
-          if (!task) return { id, error: 'task not found' };
-          ensureTaskPlanDoc(task, task.plan);
-          const content = readTaskPlanDoc(task);
-          return {
-            id,
-            result: {
-              id: task.id,
-              path: task.planDocPath || getTaskPlanPath(task.id),
-              content,
-            },
-          };
-        }
-
-        case 'tasks.plan.write': {
-          const taskId = params?.id as string;
-          const content = params?.content;
-          if (!taskId) return { id, error: 'id required' };
-          if (typeof content !== 'string') return { id, error: 'content required' };
-          const tasks = loadTasks();
-          const task = tasks.tasks.find(t => t.id === taskId);
-          if (!task) return { id, error: 'task not found' };
-          writeTaskPlanDoc(task, content);
-          task.updatedAt = new Date().toISOString();
-          saveTasks(tasks);
-          appendTaskLog(task.id, 'plan_update', 'Task PLAN.md updated');
-          broadcast({ event: 'goals.update', data: { taskId: task.id, task } });
-          broadcast({
-            event: 'tasks.log',
-            data: { taskId: task.id, eventType: 'plan_update', message: 'Task PLAN.md updated', timestamp: Date.now() },
-          });
-          return {
-            id,
-            result: {
-              id: task.id,
-              path: task.planDocPath || getTaskPlanPath(task.id),
-              content: task.plan || '',
-            },
-          };
         }
 
         case 'tasks.start': {
@@ -3688,381 +3524,6 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           } catch (err) {
             return { id, error: err instanceof Error ? err.message : String(err) };
           }
-        }
-
-
-        case 'plans.list': {
-          const plans = loadPlans();
-          return { id, result: plans.tasks };
-        }
-
-        case 'plans.update': {
-          const planId = params?.id as string;
-          if (!planId) return { id, error: 'id required' };
-          const plans = loadPlans();
-          const plan = plans.tasks.find(t => t.id === planId);
-          if (!plan) return { id, error: 'plan not found' };
-
-          if (params?.title !== undefined) plan.title = params.title as string;
-          if (params?.description !== undefined) plan.description = params.description as string;
-          if (params?.type !== undefined) plan.type = params.type as Plan['type'];
-          if (params?.status !== undefined) plan.status = params.status as Plan['status'];
-          if (params?.runState !== undefined) plan.runState = params.runState as Plan['runState'];
-          if (params?.result !== undefined) plan.result = params.result as string;
-          if (params?.error !== undefined) plan.error = params.error as string;
-          if (params?.tags !== undefined) plan.tags = params.tags as string[];
-          if (params?.sessionKey !== undefined) plan.sessionKey = params.sessionKey as string;
-          if (params?.worktreePath !== undefined) plan.worktreePath = params.worktreePath as string;
-          if (params?.branch !== undefined) plan.branch = params.branch as string;
-          plan.updatedAt = new Date().toISOString();
-          if (plan.status === 'done' && !plan.completedAt) plan.completedAt = plan.updatedAt;
-          if (plan.status !== 'done') plan.completedAt = undefined;
-
-          savePlans(plans);
-          appendPlanLog(plan.id, 'rpc_update', `Plan updated: ${plan.title}`, {
-            status: plan.status,
-            runState: plan.runState,
-          });
-          broadcast({ event: 'plans.update', data: { planId: plan.id, plan } });
-          broadcast({
-            event: 'plans.log',
-            data: { planId: plan.id, eventType: 'rpc_update', message: `Plan updated: ${plan.title}`, timestamp: Date.now() },
-          });
-          macNotify('Dora', `Plan updated: ${plan.title}`);
-          return { id, result: plan };
-        }
-
-        case 'plans.delete': {
-          const planId = params?.id as string;
-          if (!planId) return { id, error: 'id required' };
-          const plans = loadPlans();
-          const before = plans.tasks.length;
-          plans.tasks = plans.tasks.filter(t => t.id !== planId);
-          if (plans.tasks.length === before) return { id, error: 'plan not found' };
-          savePlans(plans);
-          activePlanRuns.delete(planId);
-          broadcast({ event: 'plans.update', data: { planId, deleted: true } });
-          macNotify('Dora', `Plan deleted: #${planId}`);
-          return { id, result: { deleted: true } };
-        }
-
-        case 'plans.logs': {
-          const planId = params?.id as string;
-          if (!planId) return { id, error: 'id required' };
-          const limit = Number(params?.limit || 100);
-          return { id, result: readPlanLogs(planId, Math.min(Math.max(limit, 1), 500)) };
-        }
-
-        case 'plans.start': {
-          const planId = params?.id as string;
-          if (!planId) return { id, error: 'id required' };
-
-          const plans = loadPlans();
-          const plan = plans.tasks.find(t => t.id === planId);
-          if (!plan) return { id, error: 'plan not found' };
-          if (plan.status === 'done') return { id, error: 'plan is already done' };
-
-          const existing = activePlanRuns.get(planId);
-          if (existing) {
-            const active = sessionRegistry.get(existing.sessionKey)?.activeRun || false;
-            if (active) return { id, error: 'plan execution already running' };
-            activePlanRuns.delete(planId);
-            if (planRunBySession.get(existing.sessionKey) === planId) {
-              planRunBySession.delete(existing.sessionKey);
-            }
-          }
-
-          const worktree = ensureWorktreeForPlan({
-            planId,
-            title: plan.title,
-            cwd: config.cwd,
-            baseBranch: params?.baseBranch as string | undefined,
-          });
-
-          const chatId = `plan-${planId}`;
-          const session = sessionRegistry.getOrCreate({
-            channel: 'desktop',
-            chatType: 'dm',
-            chatId,
-          });
-          const sessionKey = session.key;
-          sessionRegistry.incrementMessages(session.key);
-          fileSessionManager.setMetadata(session.sessionId, { channel: 'desktop', chatId, chatType: 'dm' });
-          broadcastSessionUpdate(session.key);
-
-          const now = new Date().toISOString();
-          plan.status = 'in_progress';
-          plan.runState = 'running';
-          plan.error = undefined;
-          plan.sessionKey = sessionKey;
-          plan.worktreePath = worktree.path;
-          plan.branch = worktree.branch;
-          plan.updatedAt = now;
-          savePlans(plans);
-
-          const ideas = loadIdeas();
-          const idea = plan.ideaId ? ideas.items.find(r => r.id === plan.ideaId) : null;
-          const ideaContext = idea
-            ? `#${idea.id} [${idea.lane}] ${idea.title}\nProblem: ${idea.problem || ''}\nOutcome: ${idea.outcome || ''}\nAudience: ${idea.audience || ''}`
-            : undefined;
-          const prompt = buildPlanExecutionPrompt(plan, ideaContext, readPlanDoc(plan));
-
-          appendPlanLog(plan.id, 'run_started', `Plan started: ${plan.title}`, {
-            sessionKey,
-            worktreePath: worktree.path,
-            branch: worktree.branch,
-          });
-          broadcast({ event: 'plans.update', data: { planId: plan.id, plan } });
-          broadcast({
-            event: 'plans.log',
-            data: { planId: plan.id, eventType: 'run_started', message: `Plan started: ${plan.title}`, timestamp: Date.now() },
-          });
-          markPlanRunStarted(planId, sessionKey);
-          macNotify('Dora', `Plan started: ${plan.title}`);
-
-          void handleAgentRun({
-            prompt,
-            sessionKey,
-            source: `plans/${planId}`,
-            cwd: worktree.path,
-            extraContext: `Worktree path: ${worktree.path}\nBranch: ${worktree.branch}\nBase branch: ${worktree.baseBranch}`,
-            messageMetadata: {
-              channel: 'desktop',
-              chatId,
-              chatType: 'dm',
-              body: prompt,
-            },
-          }).then((res) => {
-            if (!res) finishPlanRun(sessionKey, 'error', 'plan execution did not start');
-          }).catch((err) => {
-            finishPlanRun(sessionKey, 'error', err instanceof Error ? err.message : String(err));
-          });
-
-          return {
-            id,
-            result: {
-              started: true,
-              planId,
-              sessionKey,
-              sessionId: session.sessionId,
-              chatId,
-              worktreePath: worktree.path,
-              branch: worktree.branch,
-            },
-          };
-        }
-
-        case 'ideas.list': {
-          const state = loadIdeas();
-          return { id, result: state.items };
-        }
-
-        case 'ideas.add': {
-          const title = params?.title as string;
-          if (!title) return { id, error: 'title required' };
-          const state = loadIdeas();
-          const now = new Date().toISOString();
-          const lane = (params?.lane as 'now' | 'next' | 'later') || 'next';
-          const sortOrder = Math.max(
-            0,
-            ...state.items.filter(i => i.lane === lane).map(i => i.sortOrder || 0),
-          ) + 1;
-          const ids = state.items.map(i => Number.parseInt(i.id, 10)).filter(n => Number.isFinite(n));
-          const item = {
-            id: String((ids.length ? Math.max(...ids) : 0) + 1),
-            title,
-            description: params?.description as string | undefined,
-            lane,
-            impact: params?.impact as string | undefined,
-            effort: params?.effort as string | undefined,
-            problem: params?.problem as string | undefined,
-            outcome: params?.outcome as string | undefined,
-            audience: params?.audience as string | undefined,
-            risks: params?.risks as string | undefined,
-            notes: params?.notes as string | undefined,
-            tags: params?.tags as string[] | undefined,
-            linkedPlanIds: [] as string[],
-            createdAt: now,
-            updatedAt: now,
-            sortOrder,
-          };
-          state.items.push(item);
-          saveIdeas(state);
-          broadcast({ event: 'plans.update', data: { ideasVersion: state.version } });
-          return { id, result: item };
-        }
-
-        case 'ideas.update': {
-          const ideaId = params?.id as string;
-          if (!ideaId) return { id, error: 'id required' };
-          const state = loadIdeas();
-          const item = state.items.find(i => i.id === ideaId);
-          if (!item) return { id, error: 'idea not found' };
-
-          if (params?.title !== undefined) item.title = params.title as string;
-          if (params?.description !== undefined) item.description = params.description as string;
-          if (params?.lane !== undefined) item.lane = params.lane as 'now' | 'next' | 'later' | 'done';
-          if (params?.impact !== undefined) item.impact = params.impact as string;
-          if (params?.effort !== undefined) item.effort = params.effort as string;
-          if (params?.problem !== undefined) item.problem = params.problem as string;
-          if (params?.outcome !== undefined) item.outcome = params.outcome as string;
-          if (params?.audience !== undefined) item.audience = params.audience as string;
-          if (params?.risks !== undefined) item.risks = params.risks as string;
-          if (params?.notes !== undefined) item.notes = params.notes as string;
-          if (params?.tags !== undefined) item.tags = params.tags as string[];
-          if (params?.linkedPlanIds !== undefined) item.linkedPlanIds = params.linkedPlanIds as string[];
-          if (params?.sortOrder !== undefined) item.sortOrder = Number(params.sortOrder);
-          item.updatedAt = new Date().toISOString();
-          saveIdeas(state);
-          broadcast({ event: 'plans.update', data: { ideaId: item.id } });
-          return { id, result: item };
-        }
-
-        case 'ideas.delete': {
-          const ideaId = params?.id as string;
-          if (!ideaId) return { id, error: 'id required' };
-          const state = loadIdeas();
-          const before = state.items.length;
-          state.items = state.items.filter(i => i.id !== ideaId);
-          if (state.items.length === before) return { id, error: 'idea not found' };
-          saveIdeas(state);
-          broadcast({ event: 'plans.update', data: { ideaId, deleted: true } });
-          return { id, result: { deleted: true } };
-        }
-
-        case 'ideas.move': {
-          const ideaId = params?.id as string;
-          if (!ideaId) return { id, error: 'id required' };
-          const state = loadIdeas();
-          const item = state.items.find(i => i.id === ideaId);
-          if (!item) return { id, error: 'idea not found' };
-          const lane = (params?.lane as 'now' | 'next' | 'later' | 'done') || item.lane;
-          item.lane = lane;
-          item.sortOrder = Number(params?.sortOrder || item.sortOrder || 1);
-          item.updatedAt = new Date().toISOString();
-          saveIdeas(state);
-          broadcast({ event: 'plans.update', data: { ideaId: item.id } });
-          return { id, result: item };
-        }
-
-        case 'ideas.create_plan': {
-          const ideaId = params?.ideaId as string;
-          if (!ideaId) return { id, error: 'ideaId required' };
-          const state = loadIdeas();
-          const item = state.items.find(i => i.id === ideaId);
-          if (!item) return { id, error: 'idea not found' };
-
-          const plan = createPlanFromIdea({
-            ideaId: item.id,
-            title: (params?.title as string) || item.title,
-            description: (params?.description as string) || item.description || item.outcome || item.problem,
-            type: (params?.type as Plan['type']) || 'feature',
-            tags: (params?.tags as string[]) || item.tags,
-          });
-
-          if (!item.linkedPlanIds.includes(plan.id)) {
-            item.linkedPlanIds.push(plan.id);
-            item.updatedAt = new Date().toISOString();
-            saveIdeas(state);
-          }
-
-          appendPlanLog(plan.id, 'created_from_idea', `Created from idea #${item.id}`, { ideaId: item.id });
-          broadcast({ event: 'plans.update', data: { planId: plan.id, ideaId: item.id } });
-          broadcast({
-            event: 'plans.log',
-            data: { planId: plan.id, eventType: 'created_from_idea', message: `Created from idea #${item.id}`, timestamp: Date.now() },
-          });
-          return { id, result: { plan, idea: item } };
-        }
-
-        case 'worktree.create': {
-          const planId = params?.planId as string;
-          if (!planId) return { id, error: 'planId required' };
-          const plans = loadPlans();
-          const plan = plans.tasks.find(p => p.id === planId);
-          const worktree = ensureWorktreeForPlan({
-            planId,
-            title: plan?.title,
-            cwd: config.cwd,
-            baseBranch: params?.baseBranch as string | undefined,
-          });
-          if (plan) {
-            plan.worktreePath = worktree.path;
-            plan.branch = worktree.branch;
-            plan.updatedAt = new Date().toISOString();
-            savePlans(plans);
-            broadcast({ event: 'plans.update', data: { planId: plan.id, plan } });
-          }
-          return { id, result: worktree };
-        }
-
-        case 'worktree.stats': {
-          const planId = params?.planId as string | undefined;
-          let worktreePath = params?.path as string | undefined;
-          if (!worktreePath && planId) {
-            const plans = loadPlans();
-            worktreePath = plans.tasks.find(p => p.id === planId)?.worktreePath;
-          }
-          if (!worktreePath) return { id, error: 'path or planId required' };
-          return { id, result: getWorktreeStats(worktreePath) };
-        }
-
-        case 'worktree.merge': {
-          const planId = params?.planId as string | undefined;
-          let sourceBranch = params?.sourceBranch as string | undefined;
-          if (!sourceBranch && planId) {
-            const plans = loadPlans();
-            sourceBranch = plans.tasks.find(p => p.id === planId)?.branch;
-          }
-          if (!sourceBranch) return { id, error: 'sourceBranch or planId required' };
-          const merged = mergeWorktreeBranch({
-            cwd: config.cwd,
-            sourceBranch,
-            targetBranch: params?.targetBranch as string | undefined,
-          });
-          return { id, result: merged };
-        }
-
-        case 'worktree.push_pr': {
-          const planId = params?.planId as string | undefined;
-          let worktreePath = params?.path as string | undefined;
-          if (!worktreePath && planId) {
-            const plans = loadPlans();
-            worktreePath = plans.tasks.find(p => p.id === planId)?.worktreePath;
-          }
-          if (!worktreePath) return { id, error: 'path or planId required' };
-          const pushed = pushWorktreePr({
-            worktreePath,
-            baseBranch: params?.baseBranch as string | undefined,
-            title: params?.title as string | undefined,
-            body: params?.body as string | undefined,
-          });
-          return { id, result: pushed };
-        }
-
-        case 'worktree.remove': {
-          const planId = params?.planId as string | undefined;
-          let worktreePath = params?.path as string | undefined;
-          let branch = params?.branch as string | undefined;
-          const plans = loadPlans();
-          const plan = planId ? plans.tasks.find(p => p.id === planId) : undefined;
-          if (!worktreePath && plan) worktreePath = plan.worktreePath;
-          if (!branch && plan) branch = plan.branch;
-          if (!worktreePath) return { id, error: 'path or planId required' };
-          const removed = removeWorktree({
-            cwd: config.cwd,
-            worktreePath,
-            branch,
-            removeBranch: Boolean(params?.removeBranch),
-          });
-          if (plan) {
-            plan.worktreePath = undefined;
-            plan.branch = undefined;
-            plan.updatedAt = new Date().toISOString();
-            savePlans(plans);
-            broadcast({ event: 'plans.update', data: { planId: plan.id, plan } });
-          }
-          return { id, result: removed };
         }
 
         // ── Research ──

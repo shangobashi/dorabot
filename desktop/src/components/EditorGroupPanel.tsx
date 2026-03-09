@@ -1,6 +1,6 @@
 import type { EditorGroup, GroupId } from '../hooks/useLayout';
 import type { Tab } from '../hooks/useTabs';
-import { isChatTab, isFileTab, isDiffTab, isTerminalTab } from '../hooks/useTabs';
+import { isChatTab, isFileTab, isDiffTab, isTerminalTab, isTaskTab } from '../hooks/useTabs';
 import type { useGateway } from '../hooks/useGateway';
 import type { useTabs } from '../hooks/useTabs';
 import { useDroppable } from '@dnd-kit/core';
@@ -13,6 +13,7 @@ import { SoulView } from '../views/Soul';
 import { ExtensionsView } from '../views/Extensions';
 import { GoalsView } from '../views/Goals';
 import { ResearchView } from '../views/Research';
+import { TaskDetailView } from '../views/goals/TaskDetailView';
 import { FileViewer } from './FileViewer';
 import { DiffViewer } from './viewers/DiffViewer';
 import { ImageDiffViewer } from './viewers/ImageDiffViewer';
@@ -156,7 +157,19 @@ export function EditorGroupPanel({
           />
         );
       case 'goals':
-        return <GoalsView gateway={gateway} onViewSession={onViewSession} onSetupChat={onSetupChat} />;
+        return <GoalsView gateway={gateway} onViewSession={onViewSession} onSetupChat={onSetupChat} onOpenTask={(taskId: string, taskTitle: string) => tabState.openTaskTab(taskId, taskTitle)} />;
+      case 'task':
+        if (isTaskTab(activeTab)) {
+          return (
+            <TaskDetailView
+              taskId={activeTab.taskId}
+              gateway={gateway}
+              onViewSession={onViewSession}
+              onClose={() => tabState.closeTab(activeTab.id)}
+            />
+          );
+        }
+        return null;
       case 'automation':
         return <Automations gateway={gateway} />;
       case 'research':

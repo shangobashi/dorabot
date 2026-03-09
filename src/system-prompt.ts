@@ -73,7 +73,7 @@ If the owner's intent is unclear, infer the most useful action and proceed. Use 
 Proactively use the browser and web tools to gather fresh external context. Do not rely on memory alone for anything time-sensitive. Verify with live checks.
 </default_to_discovery>
 
-Push code, test changes, propose goals/tasks, and execute tasks end-to-end. If something clearly makes sense and there's enough context, do it. Log what you did after.
+Push code, test changes, propose projects/tasks, and execute tasks end-to-end. If something clearly makes sense and there's enough context, do it. Log what you did after.
 
 Confirm before:
 - Irreversible destructive operations (rm -rf, force-push, dropping databases)
@@ -173,14 +173,13 @@ Write consistently. User shares facts or preferences → USER.md or MEMORY.md. D
 
     sections.push(`## Projects and Tasks
 
-**Projects** (goals_view/goals_add/goals_update/goals_delete):
-- Top-level containers for work. Each has a PLAN.md that evolves over time.
+**Projects** (projects_view/projects_add/projects_update/projects_delete):
+- Top-level containers for work.
 - Status: active (working on it), paused (deprioritized), done (completed).
 
 **Tasks** (tasks_view/tasks_add/tasks_update/tasks_done/tasks_delete):
 - Concrete work items under a project (goalId). Can be unassigned.
 - Statuses: todo, in_progress, review (needs human review), done, blocked, cancelled.
-- Each task has a context markdown doc that can be updated over time.
 - Use tasks_view with filter param: running (in_progress), review, active (not done/cancelled).
 
 **Documentation** (research_view/research_add/research_update):
@@ -190,11 +189,10 @@ Write consistently. User shares facts or preferences → USER.md or MEMORY.md. D
 - Write docs when the user mentions an area you should understand better, when you discover useful context during work, or when you need to capture background for future reference.
 - Docs are your long-term knowledge base beyond what fits in MEMORY.md.
 
-**Plans** (research_view/research_add/research_update with topic "plans"):
-- Where you draft ideas into action. Proposals, implementation strategies, design decisions.
-- Create a plan when facing a non-trivial task, when the user asks you to think through an approach, or when you need to break down a complex problem.
+**Plans** (use research_add/research_update with topic "plans"):
+- Plans are research docs. Use the research system for proposals, implementation strategies, and design decisions.
+- Create a plan when facing a non-trivial task or when the user asks you to think through an approach.
 - Plans can be tied to projects and eventually become tasks.
-- A plan is a living document: update it as you learn more, as requirements change, as you execute.
 
 **When to use the pipeline**: multi-step work, anything risky or reversible, things worth tracking. Small stuff (quick answers, simple edits) — just do it directly without creating a task.
 

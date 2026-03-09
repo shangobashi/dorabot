@@ -62,9 +62,9 @@ function goalSummary(goal: Goal): string {
   return `#${goal.id} [${goal.status}] ${goal.title}${tags}`;
 }
 
-export const goalsViewTool = tool(
-  'goals_view',
-  'View goals and their status.',
+export const projectsViewTool = tool(
+  'projects_view',
+  'View projects and their status.',
   {
     status: z.enum(['all', 'active', 'paused', 'done']).optional(),
     id: z.string().optional(),
@@ -74,7 +74,7 @@ export const goalsViewTool = tool(
 
     if (args.id) {
       const goal = state.goals.find(g => g.id === args.id);
-      if (!goal) return { content: [{ type: 'text', text: `Goal #${args.id} not found` }], isError: true };
+      if (!goal) return { content: [{ type: 'text', text: `Project #${args.id} not found` }], isError: true };
       const lines = [
         goalSummary(goal),
         goal.description ? `Description: ${goal.description}` : '',
@@ -87,19 +87,19 @@ export const goalsViewTool = tool(
     const status = args.status || 'all';
     const goals = status === 'all' ? state.goals : state.goals.filter(g => g.status === status);
     if (!goals.length) {
-      return { content: [{ type: 'text', text: status === 'all' ? 'No goals.' : `No goals with status: ${status}` }] };
+      return { content: [{ type: 'text', text: status === 'all' ? 'No projects.' : `No projects with status: ${status}` }] };
     }
     const lines = goals
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       .map(goalSummary)
       .join('\n');
-    return { content: [{ type: 'text', text: `Goals (${goals.length}):\n\n${lines}` }] };
+    return { content: [{ type: 'text', text: `Projects (${goals.length}):\n\n${lines}` }] };
   },
 );
 
-export const goalsAddTool = tool(
-  'goals_add',
-  'Create a goal.',
+export const projectsAddTool = tool(
+  'projects_add',
+  'Create a project.',
   {
     title: z.string(),
     description: z.string().optional(),
@@ -119,13 +119,13 @@ export const goalsAddTool = tool(
     };
     state.goals.push(goal);
     saveGoals(state);
-    return { content: [{ type: 'text', text: `Goal #${goal.id} created: ${goal.title}` }] };
+    return { content: [{ type: 'text', text: `Project #${goal.id} created: ${goal.title}` }] };
   },
 );
 
-export const goalsUpdateTool = tool(
-  'goals_update',
-  'Update goal fields.',
+export const projectsUpdateTool = tool(
+  'projects_update',
+  'Update project fields.',
   {
     id: z.string(),
     title: z.string().optional(),
@@ -137,7 +137,7 @@ export const goalsUpdateTool = tool(
   async (args) => {
     const state = loadGoals();
     const goal = state.goals.find(g => g.id === args.id);
-    if (!goal) return { content: [{ type: 'text', text: `Goal #${args.id} not found` }], isError: true };
+    if (!goal) return { content: [{ type: 'text', text: `Project #${args.id} not found` }], isError: true };
 
     if (args.title !== undefined) goal.title = args.title;
     if (args.description !== undefined) goal.description = args.description;
@@ -146,13 +146,13 @@ export const goalsUpdateTool = tool(
     if (args.reason !== undefined) goal.reason = args.reason;
     goal.updatedAt = new Date().toISOString();
     saveGoals(state);
-    return { content: [{ type: 'text', text: `Goal #${goal.id} updated` }] };
+    return { content: [{ type: 'text', text: `Project #${goal.id} updated` }] };
   },
 );
 
-export const goalsDeleteTool = tool(
-  'goals_delete',
-  'Delete a goal.',
+export const projectsDeleteTool = tool(
+  'projects_delete',
+  'Delete a project.',
   {
     id: z.string(),
   },
@@ -161,16 +161,16 @@ export const goalsDeleteTool = tool(
     const before = state.goals.length;
     state.goals = state.goals.filter(g => g.id !== args.id);
     if (state.goals.length === before) {
-      return { content: [{ type: 'text', text: `Goal #${args.id} not found` }], isError: true };
+      return { content: [{ type: 'text', text: `Project #${args.id} not found` }], isError: true };
     }
     saveGoals(state);
-    return { content: [{ type: 'text', text: `Goal #${args.id} deleted` }] };
+    return { content: [{ type: 'text', text: `Project #${args.id} deleted` }] };
   },
 );
 
-export const goalsTools = [
-  goalsViewTool,
-  goalsAddTool,
-  goalsUpdateTool,
-  goalsDeleteTool,
+export const projectsTools = [
+  projectsViewTool,
+  projectsAddTool,
+  projectsUpdateTool,
+  projectsDeleteTool,
 ];

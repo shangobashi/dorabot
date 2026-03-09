@@ -1,9 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { getDb } from '../db.js';
-import { PLANS_DIR } from '../workspace.js';
 
 export type TaskStatus = 'todo' | 'in_progress' | 'review' | 'done' | 'blocked' | 'cancelled';
 
@@ -12,8 +9,6 @@ export type Task = {
   goalId?: string;
   title: string;
   status: TaskStatus;
-  plan?: string;
-  planDocPath?: string;
   result?: string;
   reason?: string;
   sessionId?: string;
@@ -28,85 +23,6 @@ export type TasksState = {
   version: number;
 };
 
-const TASK_PLAN_ROOT_DIR = join(PLANS_DIR, 'tasks');
-const TASK_PLAN_FILENAME = 'PLAN.md';
-
-function normalizeTaskPlan(task: Task, content?: string): string {
-  const trimmed = content?.trim();
-  if (trimmed) return `${trimmed}\n`;
-
-  const projectLabel = task.goalId ? `#${task.goalId}` : '(unassigned)';
-  return [
-    `# Task ${task.id} Plan`,
-    '',
-    `Task: ${task.title}`,
-    `Project: ${projectLabel}`,
-    `Status: ${task.status}`,
-    '',
-    '## Objective',
-    'Define the exact outcome this task should achieve.',
-    '',
-    '## Context',
-    '- Add constraints, assumptions, and references.',
-    '',
-    '## Execution Plan',
-    '1. Step one',
-    '2. Step two',
-    '3. Step three',
-    '',
-    '## Risks',
-    '- List concrete risks and mitigations.',
-    '',
-    '## Validation',
-    '- Describe how completion will be verified.',
-    '',
-  ].join('\n');
-}
-
-export function getTaskPlanDir(taskId: string): string {
-  return join(TASK_PLAN_ROOT_DIR, taskId);
-}
-
-export function getTaskPlanPath(taskId: string): string {
-  return join(getTaskPlanDir(taskId), TASK_PLAN_FILENAME);
-}
-
-export function ensureTaskPlanDoc(task: Task, initialContent?: string): string {
-  const taskPlanDir = getTaskPlanDir(task.id);
-  const path = task.planDocPath || getTaskPlanPath(task.id);
-  mkdirSync(taskPlanDir, { recursive: true });
-  if (!existsSync(path)) {
-    writeFileSync(path, normalizeTaskPlan(task, initialContent || task.plan), 'utf-8');
-  }
-  task.planDocPath = path;
-  return path;
-}
-
-export function readTaskPlanDoc(task: Task): string {
-  const path = task.planDocPath || getTaskPlanPath(task.id);
-  if (!existsSync(path)) return task.plan || '';
-  try {
-    return readFileSync(path, 'utf-8');
-  } catch {
-    return task.plan || '';
-  }
-}
-
-export function writeTaskPlanDoc(task: Task, content: string): string {
-  const path = ensureTaskPlanDoc(task, content);
-  const normalized = normalizeTaskPlan(task, content);
-  writeFileSync(path, normalized, 'utf-8');
-  task.planDocPath = path;
-  task.plan = normalized;
-  return path;
-}
-
-export function getTaskPlanContent(task: Task): string {
-  const content = readTaskPlanDoc(task);
-  return content.trim() ? content : normalizeTaskPlan(task, task.plan);
-}
-
-
 // migrate legacy statuses from older data
 const STATUS_MIGRATION: Record<string, TaskStatus> = {
   planning: 'todo',
@@ -115,12 +31,13 @@ const STATUS_MIGRATION: Record<string, TaskStatus> = {
 };
 
 function parseTaskRow(raw: string): Task {
-  const task = JSON.parse(raw) as Task;
+  const task = JSON.parse(raw) as Task & { plan?: string; planDocPath?: string };
   const rawStatus = (task.status || 'todo') as string;
+  // strip legacy plan fields on read
+  const { plan: _plan, planDocPath: _planDocPath, ...rest } = task;
   return {
-    ...task,
+    ...rest,
     status: (STATUS_MIGRATION[rawStatus] || rawStatus) as TaskStatus,
-    planDocPath: task.planDocPath || getTaskPlanPath(task.id),
   };
 }
 
@@ -198,12 +115,12 @@ function taskSummary(task: Task): string {
 
 export const tasksViewTool = tool(
   'tasks_view',
-  'View tasks. Filter by status, goalId, or id. Statuses: todo, in_progress, review, done, blocked, cancelled.',
+  'View tasks. Filter by status, projectId, or id.',
   {
     status: z.enum(['all', 'todo', 'in_progress', 'review', 'done', 'blocked', 'cancelled']).optional(),
     filter: z.enum(['running', 'active', 'review']).optional()
       .describe('Quick filter. running = in_progress, review = needs human review, active = not done/cancelled'),
-    goalId: z.string().optional(),
+    goalId: z.string().optional().describe('Filter by project ID'),
     id: z.string().optional(),
     includeLogs: z.boolean().optional(),
   },
@@ -213,13 +130,10 @@ export const tasksViewTool = tool(
     if (args.id) {
       const task = state.tasks.find(t => t.id === args.id);
       if (!task) return { content: [{ type: 'text', text: `Task #${args.id} not found` }], isError: true };
-      const planContent = getTaskPlanContent(task);
       const logs = args.includeLogs ? readTaskLogs(task.id, 20) : [];
       const lines = [
         taskSummary(task),
         task.reason ? `Reason: ${task.reason}` : '',
-        `Plan file: ${task.planDocPath || getTaskPlanPath(task.id)}`,
-        planContent ? `\nPlan:\n${planContent}` : '',
         task.result ? `\nResult:\n${task.result}` : '',
       ].filter(Boolean);
 
@@ -263,33 +177,26 @@ export const tasksViewTool = tool(
 
 export const tasksAddTool = tool(
   'tasks_add',
-  'Create a task and initialize its PLAN.md file.',
+  'Create a task.',
   {
     title: z.string(),
-    goalId: z.string().optional(),
+    goalId: z.string().optional().describe('Project ID to assign to'),
     status: z.enum(['todo', 'in_progress', 'review', 'done', 'blocked', 'cancelled']).optional(),
-    plan: z.string().optional(),
     reason: z.string().optional(),
   },
   async (args) => {
     const state = loadTasks();
     const now = new Date().toISOString();
     const id = nextId(state.tasks);
-    const status = args.status || 'todo';
     const task: Task = {
       id,
       goalId: args.goalId,
       title: args.title,
-      status,
-      plan: args.plan,
-      planDocPath: getTaskPlanPath(id),
+      status: args.status || 'todo',
       reason: args.reason,
       createdAt: now,
       updatedAt: now,
-      completedAt: undefined,
     };
-    task.planDocPath = ensureTaskPlanDoc(task, args.plan);
-    task.plan = readTaskPlanDoc(task);
     state.tasks.push(task);
     saveTasks(state);
     appendTaskLog(task.id, 'task_add', `Task created: ${task.title}`);
@@ -299,13 +206,12 @@ export const tasksAddTool = tool(
 
 export const tasksUpdateTool = tool(
   'tasks_update',
-  'Update task fields. When plan is provided, rewrite the task PLAN.md file.',
+  'Update task fields.',
   {
     id: z.string(),
     title: z.string().optional(),
-    goalId: z.string().nullable().optional(),
+    goalId: z.string().nullable().optional().describe('Project ID, or null to unassign'),
     status: z.enum(['todo', 'in_progress', 'review', 'done', 'blocked', 'cancelled']).optional(),
-    plan: z.string().optional(),
     result: z.string().optional(),
     reason: z.string().optional(),
     sessionId: z.string().optional(),
@@ -319,12 +225,6 @@ export const tasksUpdateTool = tool(
     if (args.title !== undefined) task.title = args.title;
     if (args.goalId !== undefined) task.goalId = args.goalId || undefined;
     if (args.status !== undefined) task.status = args.status;
-    if (args.plan !== undefined) {
-      writeTaskPlanDoc(task, args.plan);
-    } else {
-      ensureTaskPlanDoc(task, task.plan);
-      task.plan = readTaskPlanDoc(task);
-    }
     if (args.result !== undefined) task.result = args.result;
     if (args.reason !== undefined) task.reason = args.reason;
     if (args.sessionId !== undefined) task.sessionId = args.sessionId;
@@ -336,7 +236,7 @@ export const tasksUpdateTool = tool(
 
     const changes: string[] = [];
     if (args.status) changes.push(`status=${args.status}`);
-    if (args.goalId !== undefined) changes.push(`goal=${args.goalId || 'none'}`);
+    if (args.goalId !== undefined) changes.push(`project=${args.goalId || 'none'}`);
     appendTaskLog(task.id, 'task_update', changes.join(', ') || 'updated');
     return { content: [{ type: 'text', text: `Task #${task.id} updated` }] };
   },

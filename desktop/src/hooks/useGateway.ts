@@ -27,7 +27,7 @@ const TOOL_PENDING_TEXT: Record<string, string> = {
   screenshot: 'taking screenshot', browser: 'using browser',
   schedule: 'scheduling', list_schedule: 'listing schedule',
   update_schedule: 'updating schedule', cancel_schedule: 'cancelling schedule',
-  goals_view: 'viewing goals', goals_add: 'adding goal', goals_update: 'updating goal', goals_delete: 'deleting goal',
+  projects_view: 'viewing projects', projects_add: 'adding project', projects_update: 'updating project', projects_delete: 'deleting project',
   tasks_view: 'viewing tasks', tasks_add: 'adding task', tasks_update: 'updating task', tasks_done: 'completing task', tasks_delete: 'deleting task',
   research_view: 'viewing research', research_add: 'adding research', research_update: 'updating research',
 };
@@ -164,7 +164,7 @@ export type NotifiableEvent =
   | { type: 'agent.result'; sessionKey: string; cost?: number }
   | { type: 'agent.error'; sessionKey: string; error: string }
   | { type: 'tool_approval'; toolName: string }
-  | { type: 'goals.update' }
+  | { type: 'projects.update' }
   | { type: 'research.update' }
   | { type: 'auth.required'; provider: string; reason: string }
   | { type: 'auth.reauth'; provider: string; authUrl: string; loginId?: string }
@@ -1212,9 +1212,9 @@ export function useGateway() {
         break;
       }
 
-      case 'goals.update': {
+      case 'projects.update': {
         setGoalsVersion(v => v + 1);
-        onNotifiableEventRef.current?.({ type: 'goals.update' });
+        onNotifiableEventRef.current?.({ type: 'projects.update' });
         break;
       }
 

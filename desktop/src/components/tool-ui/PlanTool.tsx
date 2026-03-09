@@ -3,10 +3,10 @@ import { Badge } from "@/components/ui/badge"
 import { LayoutGrid, ListChecks } from "lucide-react"
 
 const TOOL_LABELS: Record<string, string> = {
-  goals_view: "view goals",
-  goals_add: "add goal",
-  goals_update: "update goal",
-  goals_delete: "delete goal",
+  projects_view: "view projects",
+  projects_add: "add project",
+  projects_update: "update project",
+  projects_delete: "delete project",
   tasks_view: "view tasks",
   tasks_add: "add task",
   tasks_update: "update task",
@@ -18,7 +18,7 @@ export function PlanTool({ name, input, output, isError }: ToolUIProps) {
   let parsed: any = {}
   try { parsed = JSON.parse(input) } catch {}
 
-  const label = TOOL_LABELS[name] || name.replace("goals_", "").replace("tasks_", "")
+  const label = TOOL_LABELS[name] || name.replace("projects_", "").replace("tasks_", "")
   const title = parsed.title || ""
   const status = parsed.status || ""
   const id = parsed.id || ""

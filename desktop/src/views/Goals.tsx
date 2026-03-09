@@ -4,27 +4,21 @@ import { toast } from 'sonner';
 import { Loader2, Target, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { Goal, Task, GoalStatus, TaskStatus } from './goals/helpers';
-import { getTaskPresentation, parseSessionKey, errorText } from './goals/helpers';
+import { errorText } from './goals/helpers';
 import { KanbanBoard, type ColumnId } from './goals/KanbanBoard';
-import { TaskDetailSheet } from './goals/TaskDetailSheet';
-import { PlanDialog } from './goals/PlanDialog';
 
 type Props = {
   gateway: ReturnType<typeof useGateway>;
   onViewSession?: (sessionId: string, channel?: string, chatId?: string, chatType?: string) => void;
   onSetupChat?: (prompt: string) => void;
+  onOpenTask?: (taskId: string, taskTitle: string) => void;
 };
 
-export function GoalsView({ gateway, onViewSession, onSetupChat }: Props) {
+export function GoalsView({ gateway, onViewSession, onSetupChat, onOpenTask }: Props) {
   const [loading, setLoading] = useState(true);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [saving, setSaving] = useState<string | null>(null);
-
-  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
-  const [sheetOpen, setSheetOpen] = useState(false);
-  const [planTask, setPlanTask] = useState<Task | null>(null);
-  const [planOpen, setPlanOpen] = useState(false);
 
   const taskRuns = gateway.taskRuns as Record<string, TaskRun>;
 
@@ -32,7 +26,7 @@ export function GoalsView({ gateway, onViewSession, onSetupChat }: Props) {
     if (gateway.connectionState !== 'connected') return;
     try {
       const [goalsRes, tasksRes] = await Promise.all([
-        gateway.rpc('goals.list'),
+        gateway.rpc('projects.list'),
         gateway.rpc('tasks.list'),
       ]);
       if (Array.isArray(goalsRes)) setGoals(goalsRes as Goal[]);
@@ -47,8 +41,6 @@ export function GoalsView({ gateway, onViewSession, onSetupChat }: Props) {
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { if (!loading) void load(); }, [gateway.goalsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const goalsById = useMemo(() => new Map(goals.map(g => [g.id, g])), [goals]);
-
   const wrap = useCallback(async (key: string, fn: () => Promise<void>) => {
     setSaving(key);
     try { await fn(); await load(); }
@@ -56,79 +48,28 @@ export function GoalsView({ gateway, onViewSession, onSetupChat }: Props) {
     finally { setSaving(null); }
   }, [load]);
 
-  const startTask = useCallback((taskId: string, mode?: 'plan' | 'execute') => {
-    void wrap(`task:${taskId}:start`, async () => {
-      const res = await gateway.rpc('tasks.start', { id: taskId, mode: mode || 'execute' }) as { sessionId?: string; chatId?: string } | null;
-      if (res?.sessionId && onViewSession) {
-        onViewSession(res.sessionId, 'desktop', res.chatId, 'dm');
-      }
-    });
-  }, [gateway, wrap, onViewSession]);
-
-  const watchTask = useCallback((task: Task) => {
-    if (!onViewSession) return;
-    if (task.sessionId) {
-      const parsed = task.sessionKey ? parseSessionKey(task.sessionKey) : null;
-      onViewSession(task.sessionId, parsed?.channel || 'desktop', parsed?.chatId || task.sessionId, parsed?.chatType || 'dm');
-      return;
-    }
-    const parsed = parseSessionKey(task.sessionKey);
-    if (!parsed) return;
-    const session = gateway.sessions.find((s: any) =>
-      (s.channel || 'desktop') === parsed.channel
-      && (s.chatType || 'dm') === parsed.chatType
-      && s.chatId === parsed.chatId,
-    );
-    if (session?.id) onViewSession(session.id, parsed.channel, parsed.chatId, parsed.chatType);
-  }, [gateway.sessions, onViewSession]);
-
-  const unblockTask = useCallback((taskId: string) => {
-    void wrap(`task:${taskId}:status`, async () => {
-      await gateway.rpc('tasks.update', { id: taskId, status: 'todo' });
-    });
-  }, [gateway, wrap]);
-
-  const saveTask = useCallback((taskId: string, updates: { title: string; goalId: string; reason: string; result: string }) => {
-    void wrap(`task:${taskId}:save`, async () => {
-      await gateway.rpc('tasks.update', { id: taskId, ...updates });
-    });
-  }, [gateway, wrap]);
-
-  const blockTask = useCallback((taskId: string) => {
-    void wrap(`task:${taskId}:status`, async () => {
-      await gateway.rpc('tasks.update', { id: taskId, status: 'blocked' });
-    });
-  }, [gateway, wrap]);
-
-  const deleteTask = useCallback((taskId: string) => {
-    void wrap(`task:${taskId}:delete`, async () => {
-      await gateway.rpc('tasks.delete', { id: taskId });
-      if (selectedTask?.id === taskId) { setSelectedTask(null); setSheetOpen(false); }
-    });
-  }, [gateway, wrap, selectedTask]);
-
   const createGoal = useCallback((title: string, description?: string) => {
     void wrap('goal:create', async () => {
-      await gateway.rpc('goals.add', { title, description });
+      await gateway.rpc('projects.add', { title, description });
     });
   }, [gateway, wrap]);
 
   const toggleGoalStatus = useCallback((goal: Goal) => {
     const next: GoalStatus = goal.status === 'paused' ? 'active' : 'paused';
     void wrap(`goal:${goal.id}`, async () => {
-      await gateway.rpc('goals.update', { id: goal.id, status: next });
+      await gateway.rpc('projects.update', { id: goal.id, status: next });
     });
   }, [gateway, wrap]);
 
   const completeGoal = useCallback((goal: Goal) => {
     void wrap(`goal:${goal.id}`, async () => {
-      await gateway.rpc('goals.update', { id: goal.id, status: 'done' as GoalStatus });
+      await gateway.rpc('projects.update', { id: goal.id, status: 'done' as GoalStatus });
     });
   }, [gateway, wrap]);
 
   const deleteGoal = useCallback((goalId: string) => {
     void wrap(`goal:delete:${goalId}`, async () => {
-      await gateway.rpc('goals.delete', { id: goalId });
+      await gateway.rpc('projects.delete', { id: goalId });
     });
   }, [gateway, wrap]);
 
@@ -156,15 +97,11 @@ export function GoalsView({ gateway, onViewSession, onSetupChat }: Props) {
     });
   }, [gateway, wrap]);
 
-  const openTaskDetail = useCallback((task: Task) => {
-    setSelectedTask(task);
-    setSheetOpen(true);
-  }, []);
-
-  const openPlan = useCallback((task: Task) => {
-    setPlanTask(task);
-    setPlanOpen(true);
-  }, []);
+  const handleTaskClick = useCallback((task: Task) => {
+    if (onOpenTask) {
+      onOpenTask(task.id, task.title);
+    }
+  }, [onOpenTask]);
 
   if (gateway.connectionState !== 'connected') {
     return (
@@ -211,48 +148,18 @@ export function GoalsView({ gateway, onViewSession, onSetupChat }: Props) {
   }
 
   return (
-    <>
-      <KanbanBoard
-        tasks={tasks}
-        goals={goals}
-        taskRuns={taskRuns}
-        goalsById={goalsById}
-        onTaskClick={openTaskDetail}
-        onStartTask={startTask}
-        onWatchTask={watchTask}
-        onUnblockTask={unblockTask}
-        onViewPlan={openPlan}
-        onCreateTask={createTask}
-        onMoveTask={moveTask}
-        onCreateGoal={createGoal}
-        onToggleGoalStatus={toggleGoalStatus}
-        onCompleteGoal={completeGoal}
-        onDeleteGoal={deleteGoal}
-        busy={saving}
-      />
-
-      <TaskDetailSheet
-        task={selectedTask}
-        presentation={selectedTask ? getTaskPresentation(selectedTask, taskRuns) : null}
-        goals={goals}
-        open={sheetOpen}
-        onOpenChange={setSheetOpen}
-        gateway={gateway}
-        onSave={saveTask}
-        onBlock={blockTask}
-        onDelete={deleteTask}
-        onViewPlan={openPlan}
-        onViewSession={watchTask}
-        busy={!!saving && !!selectedTask && saving.startsWith(`task:${selectedTask.id}:`)}
-      />
-
-      <PlanDialog
-        task={planTask}
-        open={planOpen}
-        onOpenChange={setPlanOpen}
-        gateway={gateway}
-        onSaved={load}
-      />
-    </>
+    <KanbanBoard
+      tasks={tasks}
+      goals={goals}
+      taskRuns={taskRuns}
+      onTaskClick={handleTaskClick}
+      onCreateTask={createTask}
+      onMoveTask={moveTask}
+      onCreateGoal={createGoal}
+      onToggleGoalStatus={toggleGoalStatus}
+      onCompleteGoal={completeGoal}
+      onDeleteGoal={deleteGoal}
+      busy={saving}
+    />
   );
 }

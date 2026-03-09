@@ -19,8 +19,6 @@ export type Task = {
   goalId?: string;
   title: string;
   status: TaskStatus;
-  plan?: string;
-  planDocPath?: string;
   result?: string;
   reason?: string;
   sessionId?: string;

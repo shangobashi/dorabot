@@ -1167,8 +1167,8 @@ const TOUR_FEATURES = [
   },
   {
     icon: LayoutGrid,
-    title: 'Goals',
-    description: 'Track goals and tasks, approve plans, and execute.',
+    title: 'Projects',
+    description: 'Track projects and tasks on a kanban board.',
     color: 'text-success',
   },
   {

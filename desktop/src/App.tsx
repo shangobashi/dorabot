@@ -71,7 +71,7 @@ function playNotifSound() {
 
 const PRIMARY_NAV_ITEMS: { id: TabType; label: string; icon: React.ReactNode }[] = [
   { id: 'chat', label: 'Chat', icon: <MessageSquare className="w-3.5 h-3.5" /> },
-  { id: 'goals', label: 'Goals', icon: <LayoutGrid className="w-3.5 h-3.5" /> },
+  { id: 'goals', label: 'Projects', icon: <LayoutGrid className="w-3.5 h-3.5" /> },
   { id: 'research', label: 'Research', icon: <FileSearch className="w-3.5 h-3.5" /> },
   { id: 'settings', label: 'Settings', icon: <Settings2 className="w-3.5 h-3.5" /> },
 ];
@@ -456,18 +456,18 @@ export default function App() {
             playNotifSound();
           }
           break;
-        case 'goals.update':
-          if (!allowPing('goals.update')) break;
-          toast('Goals updated', {
+        case 'projects.update':
+          if (!allowPing('projects.update')) break;
+          toast('Projects updated', {
             icon: <Target className="w-4 h-4 text-orange-400" />,
             duration: 4000,
             action: {
               label: 'View',
-              onClick: () => tabState.openTab({ id: 'view:goals', type: 'goals', label: 'Goals', closable: true }),
+              onClick: () => tabState.openTab({ id: 'view:goals', type: 'goals', label: 'Projects', closable: true }),
             },
           });
           if (!windowFocused) {
-            notify('goals updated');
+            notify('projects updated');
             playNotifSound();
           }
           break;
@@ -638,7 +638,7 @@ export default function App() {
       } else {
         tabState.newChatTab();
       }
-    } else if (navId !== 'file' && navId !== 'diff' && navId !== 'terminal') {
+    } else if (navId !== 'file' && navId !== 'diff' && navId !== 'terminal' && navId !== 'task') {
       tabState.openViewTab(navId, ALL_NAV_ITEMS.find(n => n.id === navId)?.label || navId);
     }
   }, [tabState, gw.sessionStates]);

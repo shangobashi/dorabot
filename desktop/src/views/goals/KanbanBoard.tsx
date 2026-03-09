@@ -18,7 +18,6 @@ import type { LucideIcon } from 'lucide-react';
 import type { TaskRun } from '../../hooks/useGateway';
 import type { Task, Goal, TaskStatus } from './helpers';
 import { KanbanColumn } from './KanbanColumn';
-import { KanbanCard } from './KanbanCard';
 
 export type ColumnId = 'todo' | 'in_progress' | 'review' | 'done';
 
@@ -50,7 +49,6 @@ export function getColumnForTask(task: Task, taskRuns: Record<string, TaskRun>):
   if (running || task.status === 'in_progress') return 'in_progress';
   if (task.status === 'review') return 'review';
   if (task.status === 'done') return 'done';
-  // todo, blocked, cancelled all show in todo column
   return 'todo';
 }
 
@@ -58,12 +56,7 @@ type Props = {
   tasks: Task[];
   goals: Goal[];
   taskRuns: Record<string, TaskRun>;
-  goalsById: Map<string, Goal>;
   onTaskClick: (task: Task) => void;
-  onStartTask: (taskId: string, mode?: 'plan' | 'execute') => void;
-  onWatchTask: (task: Task) => void;
-  onUnblockTask: (taskId: string) => void;
-  onViewPlan: (task: Task) => void;
   onCreateTask: (title: string, goalId?: string, status?: string) => void;
   onMoveTask: (taskId: string, toColumn: ColumnId, newGoalId?: string) => void;
   onCreateGoal: (title: string, description?: string) => void;
@@ -75,54 +68,51 @@ type Props = {
 
 function ProjectHeader({
   goal,
+  taskCount,
+  doneCount,
   blockedCount,
-  cancelledCount,
   onToggleGoalStatus,
   onCompleteGoal,
   onDeleteGoal,
 }: {
   goal: Goal | null;
+  taskCount: number;
+  doneCount: number;
   blockedCount: number;
-  cancelledCount: number;
   onToggleGoalStatus?: (goal: Goal) => void;
   onCompleteGoal?: (goal: Goal) => void;
   onDeleteGoal?: (goalId: string) => void;
 }) {
   return (
-    <div className="flex items-center gap-3 px-4 py-3 border-b border-border/50">
-      <Target className="h-4 w-4 text-muted-foreground shrink-0" />
+    <div className="flex items-center gap-2 px-3 py-2.5 border-b border-border/30">
+      <Target className="h-3.5 w-3.5 text-muted-foreground/50 shrink-0" />
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-semibold truncate">
+        <span className="text-[13px] font-medium">
           {goal ? goal.title : 'Unassigned'}
-        </div>
+        </span>
         {goal?.description && (
-          <div className="text-[11px] text-muted-foreground truncate mt-0.5">
+          <span className="text-[11px] text-muted-foreground/50 ml-2">
             {goal.description}
-          </div>
+          </span>
         )}
       </div>
 
-      <div className="flex items-center gap-1.5 shrink-0 text-[11px] text-muted-foreground/60">
+      <div className="flex items-center gap-2 shrink-0 text-[10px] text-muted-foreground/40">
         {blockedCount > 0 && (
-          <span className="flex items-center gap-1 text-destructive/60">
-            <AlertTriangle className="h-3 w-3" />
+          <span className="flex items-center gap-0.5 text-destructive/50">
+            <AlertTriangle className="h-2.5 w-2.5" />
             {blockedCount}
           </span>
         )}
-        {cancelledCount > 0 && (
-          <span className="flex items-center gap-1">
-            <Ban className="h-3 w-3" />
-            {cancelledCount}
-          </span>
-        )}
+        <span>{doneCount}/{taskCount}</span>
       </div>
 
       {goal && onToggleGoalStatus && onCompleteGoal && onDeleteGoal && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm" className="h-7 w-7 p-0 shrink-0">
+            <button type="button" className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground/30 hover:text-muted-foreground hover:bg-muted/50 transition-colors shrink-0">
               <MoreHorizontal className="h-3.5 w-3.5" />
-            </Button>
+            </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuItem onClick={() => onToggleGoalStatus(goal)}>
@@ -133,7 +123,7 @@ function ProjectHeader({
               )}
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => onCompleteGoal(goal)}>
-              <Check className="mr-2 h-3.5 w-3.5" /> Complete project
+              <Check className="mr-2 h-3.5 w-3.5" /> Complete
             </DropdownMenuItem>
             <DropdownMenuItem className="text-destructive" onClick={() => onDeleteGoal(goal.id)}>
               <Trash2 className="mr-2 h-3.5 w-3.5" /> Delete
@@ -143,16 +133,15 @@ function ProjectHeader({
       )}
 
       {goal?.status === 'paused' && (
-        <span className="text-[10px] text-amber-500 font-medium">PAUSED</span>
+        <span className="text-[9px] text-amber-500/70 font-medium uppercase">paused</span>
       )}
     </div>
   );
 }
 
 export function KanbanBoard({
-  tasks, goals, taskRuns, goalsById,
-  onTaskClick, onStartTask, onWatchTask, onUnblockTask, onViewPlan,
-  onCreateTask, onMoveTask, onCreateGoal,
+  tasks, goals, taskRuns,
+  onTaskClick, onCreateTask, onMoveTask, onCreateGoal,
   onToggleGoalStatus, onCompleteGoal, onDeleteGoal,
   busy,
 }: Props) {
@@ -202,7 +191,6 @@ export function KanbanBoard({
     if (!over) return;
 
     const overId = over.id as string;
-    // droppable IDs are formatted as "goalId:columnId" or ":columnId" for orphans
     const sepIdx = overId.indexOf(':');
     if (sepIdx === -1) return;
     const targetGoalId = overId.slice(0, sepIdx) || undefined;
@@ -244,20 +232,21 @@ export function KanbanBoard({
     }
 
     const blockedCount = projectTasks.filter(t => t.status === 'blocked').length;
-    const cancelledCount = projectTasks.filter(t => t.status === 'cancelled').length;
+    const doneCount = projectTasks.filter(t => t.status === 'done').length;
     const droppablePrefix = goal?.id || '';
 
     return (
-      <div key={goal?.id || '__orphan'} className="rounded-xl border border-border bg-card/50">
+      <div key={goal?.id || '__orphan'} className="rounded-lg border border-border/40 bg-card/30">
         <ProjectHeader
           goal={goal}
+          taskCount={projectTasks.length}
+          doneCount={doneCount}
           blockedCount={blockedCount}
-          cancelledCount={cancelledCount}
           onToggleGoalStatus={goal ? onToggleGoalStatus : undefined}
           onCompleteGoal={goal ? onCompleteGoal : undefined}
           onDeleteGoal={goal ? onDeleteGoal : undefined}
         />
-        <div className="flex overflow-x-auto p-2 gap-1.5">
+        <div className="flex overflow-x-auto p-1.5 gap-0">
           {COLUMNS.map(col => (
             <KanbanColumn
               key={col.id}
@@ -267,14 +256,8 @@ export function KanbanBoard({
               icon={col.icon}
               iconColor={col.iconColor}
               tasks={tasksByColumn.get(col.id) || []}
-              goalsById={goalsById}
               onTaskClick={onTaskClick}
-              onStartTask={onStartTask}
-              onWatchTask={onWatchTask}
-              onUnblockTask={onUnblockTask}
-              onViewPlan={onViewPlan}
               onCreateTask={(title) => handleCreateInColumn(title, col.id, goal?.id)}
-              busy={busy}
             />
           ))}
         </div>
@@ -285,19 +268,19 @@ export function KanbanBoard({
   return (
     <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
       <div className="h-full overflow-y-auto">
-        <div className="space-y-4 p-4">
+        <div className="space-y-3 p-4">
           {/* header */}
           <div className="flex items-center gap-2">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/50">
               Projects
             </span>
             <button
               type="button"
-              className="h-5 w-5 flex items-center justify-center rounded text-muted-foreground/50 hover:text-muted-foreground hover:bg-muted/50 transition-colors"
+              className="h-4 w-4 flex items-center justify-center rounded text-muted-foreground/30 hover:text-muted-foreground hover:bg-muted/50 transition-colors"
               onClick={() => setShowGoalForm(v => !v)}
               title="New project"
             >
-              <Plus className="h-3 w-3" />
+              <Plus className="h-2.5 w-2.5" />
             </button>
           </div>
 
@@ -312,19 +295,11 @@ export function KanbanBoard({
                   if (e.key === 'Escape') { setShowGoalForm(false); setNewGoalTitle(''); }
                 }}
                 placeholder="Project name..."
-                className="h-8 text-xs max-w-xs"
+                className="h-7 text-xs max-w-xs"
                 autoFocus
               />
-              <Button size="sm" className="h-8 text-xs" onClick={handleCreateGoal} disabled={!newGoalTitle.trim()}>
+              <Button size="sm" className="h-7 text-xs" onClick={handleCreateGoal} disabled={!newGoalTitle.trim()}>
                 Create
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-8 text-xs"
-                onClick={() => { setShowGoalForm(false); setNewGoalTitle(''); }}
-              >
-                Cancel
               </Button>
             </div>
           )}
@@ -337,22 +312,22 @@ export function KanbanBoard({
 
           {/* completed projects */}
           {doneGoals.length > 0 && (
-            <div className="mt-4">
+            <div className="mt-2">
               <button
                 type="button"
-                className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/40 hover:text-muted-foreground/60 transition-colors"
+                className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/30 hover:text-muted-foreground/50 transition-colors"
                 onClick={() => setShowArchive(v => !v)}
               >
                 <ChevronDown className={cn('h-3 w-3 transition-transform', !showArchive && '-rotate-90')} />
                 Completed ({doneGoals.length})
               </button>
               {showArchive && (
-                <div className="mt-2 space-y-2">
+                <div className="mt-1.5 space-y-1">
                   {doneGoals.map(goal => (
-                    <div key={goal.id} className="rounded-lg border border-border/30 bg-card/20 px-4 py-2 flex items-center gap-2 opacity-50">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500/50" />
-                      <span className="text-xs">{goal.title}</span>
-                      <span className="text-[10px] text-muted-foreground/40 ml-auto">
+                    <div key={goal.id} className="rounded-md px-3 py-1.5 flex items-center gap-2 text-muted-foreground/40">
+                      <CheckCircle2 className="h-3 w-3 text-emerald-500/30" />
+                      <span className="text-[11px]">{goal.title}</span>
+                      <span className="text-[10px] ml-auto">
                         {(tasksByGoal.map.get(goal.id) || []).length} tasks
                       </span>
                     </div>
@@ -367,8 +342,8 @@ export function KanbanBoard({
       {/* drag overlay */}
       <DragOverlay>
         {activeTask && (
-          <div className="rounded-lg border border-border/80 bg-card p-2.5 shadow-lg opacity-90 max-w-[200px]">
-            <div className="text-[12px] leading-snug font-medium">{activeTask.title}</div>
+          <div className="rounded-md bg-card border border-border/50 px-2 py-1.5 shadow-lg opacity-90 max-w-[200px]">
+            <div className="text-[12px] leading-snug truncate">{activeTask.title}</div>
           </div>
         )}
       </DragOverlay>

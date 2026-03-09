@@ -3,7 +3,7 @@ import type { useGateway } from './useGateway';
 import type { useLayout } from './useLayout';
 import type { GroupId } from './useLayout';
 
-export type TabType = 'chat' | 'channels' | 'goals' | 'automation' | 'extensions' | 'memory' | 'research' | 'settings' | 'file' | 'diff' | 'terminal';
+export type TabType = 'chat' | 'channels' | 'goals' | 'automation' | 'extensions' | 'memory' | 'research' | 'settings' | 'file' | 'diff' | 'terminal' | 'task';
 
 export type ChatTab = {
   id: string;
@@ -44,14 +44,22 @@ export type TerminalTab = {
   cwd?: string;
 };
 
+export type TaskTab = {
+  id: string;
+  type: 'task';
+  label: string;
+  closable: true;
+  taskId: string;
+};
+
 export type ViewTab = {
   id: string;
-  type: Exclude<TabType, 'chat' | 'file' | 'diff' | 'terminal'>;
+  type: Exclude<TabType, 'chat' | 'file' | 'diff' | 'terminal' | 'task'>;
   label: string;
   closable: true;
 };
 
-export type Tab = ChatTab | ViewTab | FileTab | DiffTab | TerminalTab;
+export type Tab = ChatTab | ViewTab | FileTab | DiffTab | TerminalTab | TaskTab;
 
 export function isChatTab(tab: Tab): tab is ChatTab {
   return tab.type === 'chat';
@@ -67,6 +75,10 @@ export function isDiffTab(tab: Tab): tab is DiffTab {
 
 export function isTerminalTab(tab: Tab): tab is TerminalTab {
   return tab.type === 'terminal';
+}
+
+export function isTaskTab(tab: Tab): tab is TaskTab {
+  return tab.type === 'task';
 }
 
 const TABS_STORAGE_KEY = 'dorabot:tabs';
@@ -96,8 +108,12 @@ function loadTabsFromStorage(): Tab[] {
           ...(tab as any),
           id: 'view:goals',
           type: 'goals',
-          label: 'Goals',
+          label: 'Projects',
         } as Tab;
+      }
+      // Migrate old "Goals" label
+      if ((tab as any).type === 'goals' && (tab as any).label === 'Goals') {
+        return { ...tab, label: 'Projects' } as Tab;
       }
       return tab;
     });
@@ -513,7 +529,7 @@ export function useTabs(gw: ReturnType<typeof useGateway>, layout: ReturnType<ty
     return tab.id;
   }, [tabs, focusTab, openTab]);
 
-  const openViewTab = useCallback((type: Exclude<TabType, 'chat' | 'file' | 'diff' | 'terminal'>, label: string, groupId?: GroupId) => {
+  const openViewTab = useCallback((type: Exclude<TabType, 'chat' | 'file' | 'diff' | 'terminal' | 'task'>, label: string, groupId?: GroupId) => {
     const id = `view:${type}`;
     const existing = tabs.find(t => t.id === id);
     if (existing) {
@@ -595,6 +611,25 @@ export function useTabs(gw: ReturnType<typeof useGateway>, layout: ReturnType<ty
     setActiveTabId(id);
     layout.addTabToGroup(id, groupId);
   }, [layout]);
+
+  const openTaskTab = useCallback((taskId: string, taskTitle: string, groupId?: GroupId) => {
+    const id = `task:${taskId}`;
+    const existing = tabs.find(t => t.id === id);
+    if (existing) {
+      focusTab(id, groupId);
+      return;
+    }
+    const tab: TaskTab = {
+      id,
+      type: 'task',
+      label: taskTitle,
+      closable: true,
+      taskId,
+    };
+    setTabs(prev => [...prev, tab]);
+    setActiveTabId(id);
+    layout.addTabToGroup(id, groupId);
+  }, [tabs, focusTab, layout]);
 
   const newChatTab = useCallback((groupId?: GroupId): { tabId: string; sessionKey: string; chatId: string } => {
     const { sessionKey, chatId } = gw.newSession();
@@ -761,6 +796,7 @@ export function useTabs(gw: ReturnType<typeof useGateway>, layout: ReturnType<ty
     openFileTab,
     openDiffTab,
     openTerminalTab,
+    openTaskTab,
     newChatTab,
     unreadBySession,
     dirtyTabs,

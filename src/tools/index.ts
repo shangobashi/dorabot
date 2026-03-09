@@ -4,7 +4,7 @@ import { messageTool } from './messaging.js';
 import { calendarTools } from './calendar.js';
 import { screenshotTool } from './screenshot.js';
 import { browserTool } from './browser.js';
-import { goalsTools } from './goals.js';
+import { projectsTools } from './goals.js';
 import { tasksTools } from './tasks.js';
 import { researchTools } from './research.js';
 import { memoryTools } from './memory.js';
@@ -19,11 +19,6 @@ export {
   saveTasks,
   appendTaskLog,
   readTaskLogs,
-  getTaskPlanPath,
-  ensureTaskPlanDoc,
-  readTaskPlanDoc,
-  writeTaskPlanDoc,
-  getTaskPlanContent,
   type Task,
   type TaskStatus,
   type TasksState,
@@ -36,7 +31,7 @@ export const customTools = [
   screenshotTool,
   browserTool,
   ...calendarTools,
-  ...goalsTools,
+  ...projectsTools,
   ...tasksTools,
   ...researchTools,
   ...memoryTools,

@@ -30,7 +30,7 @@ export function buildAutonomousPrompt(timezone?: string): string {
 ## Bootstrap
 
 1. Read ${todayDir}/MEMORY.md if it exists (what you've already done today).
-2. Check goals and tasks (goals_view, tasks_view).
+2. Check projects and tasks (projects_view, tasks_view).
 3. If creating research output, check ${RESEARCH_SKILL_PATH} first.
 
 ## Priority (strict order)
@@ -41,8 +41,8 @@ export function buildAutonomousPrompt(timezone?: string): string {
 4. **Handle blockers.** AskUserQuestion timeout? Message on a channel, sleep 120s, ask once more, then continue with best assumptions and log them.
 5. **Research or prepare.** If a task needs info, go get it. Store findings via research_add/research_update. Check research_view first to avoid duplicating.
 6. **Get to know the owner.** If USER.md is mostly empty, use the onboard skill. One concise question per pulse via AskUserQuestion.
-7. **Engage the owner.** Nudge them about goals and tasks. Remind them what's pending approval, what's blocked, and what's next. Use media to make it stick: generate a meme (meme skill with memegen.link) or an image tied to their current work, attach with media param. Always include a concrete next step or question.
-8. **Propose new goals/tasks.** Notice something worth doing? goals_add or tasks_add.
+7. **Engage the owner.** Nudge them about projects and tasks. Remind them what's blocked and what's next. Use media to make it stick: generate a meme (meme skill with memegen.link) or an image tied to their current work, attach with media param. Always include a concrete next step or question.
+8. **Propose new projects/tasks.** Notice something worth doing? projects_add or tasks_add.
 9. **Create momentum.** Break large tasks into smaller follow-up tasks and queue them.
 
 Do at least one meaningful action every pulse. Do not end without a concrete next action.
@@ -52,12 +52,12 @@ Do at least one meaningful action every pulse. Do not end without a concrete nex
 - Log to ${todayDir}/MEMORY.md with timestamp.
 - Real findings → research_add (not memory files). Include source links.
 - Stable facts changed → update ${WORKSPACE_DIR}/MEMORY.md.
-- Created/updated goals, tasks, or research → message the owner (what changed, why, suggested next action).
+- Created/updated projects, tasks, or research → message the owner (what changed, why, suggested next action).
 - Urgent → message them.
 
 ## Boundaries
 
-Stay focused. Before declaring "nothing to act on", verify: goals checked, tasks checked, monitoring checked, follow-ups checked, new tasks considered. Log why none were actionable. "Nothing to act on" should be rare.`;
+Stay focused. Before declaring "nothing to act on", verify: projects checked, tasks checked, monitoring checked, follow-ups checked, new tasks considered. Log why none were actionable. "Nothing to act on" should be rare.`;
 }
 
 export function buildAutonomousCalendarItem(timezone?: string, interval?: string) {
