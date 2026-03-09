@@ -420,6 +420,8 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
   const watchedPathsByClient = new Map<WebSocket, Set<string>>();
   const shellProcesses = new Map<string, nodePty.IPty>();
   const shellsByClient = new Map<WebSocket, Set<string>>();
+  const orphanedShells = new Map<string, ReturnType<typeof setTimeout>>();
+  const SHELL_ORPHAN_GRACE_MS = 60_000;
   const FS_WATCH_DEBOUNCE_MS = 250;
   const DEBUG_FS_WATCH = process.env.DORABOT_DEBUG_FS_WATCH === '1';
 
@@ -4622,7 +4624,21 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           const cols = (params?.cols as number) || 80;
           const rows = (params?.rows as number) || 24;
           if (!shellId) return { id, error: 'shellId required' };
-          if (shellProcesses.has(shellId)) return { id, result: { spawned: true } };
+          if (shellProcesses.has(shellId)) {
+            // reclaim orphaned shell if a new client is spawning with the same ID
+            const orphanTimer = orphanedShells.get(shellId);
+            if (orphanTimer) {
+              clearTimeout(orphanTimer);
+              orphanedShells.delete(shellId);
+              console.log(`[gateway] reclaimed orphaned shell ${shellId}`);
+            }
+            // re-associate with the current client
+            if (clientWs) {
+              if (!shellsByClient.has(clientWs)) shellsByClient.set(clientWs, new Set());
+              shellsByClient.get(clientWs)!.add(shellId);
+            }
+            return { id, result: { spawned: true, reclaimed: true } };
+          }
 
           const shell = process.env.SHELL || '/bin/zsh';
           const cwd = (params?.cwd as string) || config.cwd || homedir();
@@ -5113,8 +5129,19 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
       const shells = shellsByClient.get(ws);
       if (!shells) return;
       for (const shellId of shells) {
-        const pty = shellProcesses.get(shellId);
-        if (pty) { pty.kill(); shellProcesses.delete(shellId); }
+        if (!shellProcesses.has(shellId)) continue;
+        // grace period: don't kill immediately, allow reconnecting client to reclaim
+        const timer = setTimeout(() => {
+          orphanedShells.delete(shellId);
+          const pty = shellProcesses.get(shellId);
+          if (pty) {
+            console.log(`[gateway] killing orphaned shell ${shellId} (no reclaim within ${SHELL_ORPHAN_GRACE_MS / 1000}s)`);
+            pty.kill();
+            shellProcesses.delete(shellId);
+          }
+        }, SHELL_ORPHAN_GRACE_MS);
+        timer.unref?.();
+        orphanedShells.set(shellId, timer);
       }
       shellsByClient.delete(ws);
     };
@@ -5213,6 +5240,8 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
       watchedPathsByClient.clear();
 
       // Kill all PTY processes
+      for (const [, timer] of orphanedShells) clearTimeout(timer);
+      orphanedShells.clear();
       for (const [, pty] of shellProcesses) { try { pty.kill(); } catch { /* ignore */ } }
       shellProcesses.clear();
       shellsByClient.clear();

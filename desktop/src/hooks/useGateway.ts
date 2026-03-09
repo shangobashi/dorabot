@@ -21,7 +21,7 @@ function cleanToolName(name: string): string {
 const TOOL_PENDING_TEXT: Record<string, string> = {
   Read: 'reading file', Write: 'writing file', Edit: 'editing file',
   Glob: 'searching files', Grep: 'searching code', Bash: 'running command',
-  WebFetch: 'fetching url', WebSearch: 'searching web', Task: 'running task',
+  WebFetch: 'fetching url', WebSearch: 'searching web', Task: 'running task', Agent: 'running agent',
   AskUserQuestion: 'asking question', TodoWrite: 'updating tasks',
   NotebookEdit: 'editing notebook', message: 'sending message',
   screenshot: 'taking screenshot', browser: 'using browser',
@@ -490,8 +490,12 @@ export function useGateway() {
   const activeSessionKeyRef = useRef<string>('');
   const currentChatIdRef = useRef<string>(crypto.randomUUID());
   const trackedSessionsRef = useRef<Set<string>>(new Set());
-  const lastSeqRef = useRef<number>(0);
-  const lastSeqBySessionRef = useRef<Map<string, number>>(new Map());
+  const lastSeqRef = useRef<number>(
+    (() => { try { return Number(sessionStorage.getItem('gw:lastSeq')) || 0; } catch { return 0; } })()
+  );
+  const lastSeqBySessionRef = useRef<Map<string, number>>(
+    (() => { try { const r = sessionStorage.getItem('gw:lastSeqBySession'); return r ? new Map(JSON.parse(r)) : new Map(); } catch { return new Map(); } })()
+  );
   const seenSeqsRef = useRef<Set<number>>(new Set());
   const seenSeqOrderRef = useRef<number[]>([]);
   const MAX_TRACKED_SEQS = 100000;
@@ -499,6 +503,18 @@ export function useGateway() {
   const onSessionIdChangeRef = useRef<((sessionKey: string, sessionId: string) => void) | null>(null);
   const onFirstMessageRef = useRef<((sessionKey: string, preview: string) => void) | null>(null);
   const onNotifiableEventRef = useRef<((event: NotifiableEvent) => void) | null>(null);
+
+  const seqPersistTimerRef = useRef<number | null>(null);
+  const persistSeqCounters = useCallback(() => {
+    if (seqPersistTimerRef.current !== null) return;
+    seqPersistTimerRef.current = window.setTimeout(() => {
+      seqPersistTimerRef.current = null;
+      try {
+        sessionStorage.setItem('gw:lastSeq', String(lastSeqRef.current));
+        sessionStorage.setItem('gw:lastSeqBySession', JSON.stringify([...lastSeqBySessionRef.current]));
+      } catch { /* storage full or unavailable */ }
+    }, 500);
+  }, []);
 
   const markSeqIfNew = useCallback((seq: number, sessionKey?: string): boolean => {
     if (seenSeqsRef.current.has(seq)) return false;
@@ -513,8 +529,9 @@ export function useGateway() {
       const oldest = seenSeqOrderRef.current.shift();
       if (oldest !== undefined) seenSeqsRef.current.delete(oldest);
     }
+    persistSeqCounters();
     return true;
-  }, []);
+  }, [persistSeqCounters]);
 
   const buildLastSeqBySession = useCallback((sessionKeys: string[]): Record<string, number> => {
     const map: Record<string, number> = {};
@@ -1453,6 +1470,14 @@ export function useGateway() {
 
   useEffect(() => {
     return () => {
+      if (seqPersistTimerRef.current !== null) {
+        clearTimeout(seqPersistTimerRef.current);
+        // flush synchronously on unmount
+        try {
+          sessionStorage.setItem('gw:lastSeq', String(lastSeqRef.current));
+          sessionStorage.setItem('gw:lastSeqBySession', JSON.stringify([...lastSeqBySessionRef.current]));
+        } catch { /* ignore */ }
+      }
       if (pendingSubscribeRef.current) {
         clearTimeout(pendingSubscribeRef.current);
         pendingSubscribeRef.current = null;
