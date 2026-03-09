@@ -960,12 +960,18 @@ export function FileExplorer({ rpc, connected, onFileClick, onOpenDiff, onFileCh
   }, [dirs, selectedPath, viewRoot]);
 
   const createFolder = useCallback(() => {
-    setInlineInput({ parentPath: getCreationParentPath(), type: 'folder' });
-  }, [getCreationParentPath]);
+    const parentPath = getCreationParentPath();
+    setExpanded(prev => new Set(prev).add(parentPath));
+    loadDir(parentPath);
+    setInlineInput({ parentPath, type: 'folder' });
+  }, [getCreationParentPath, loadDir]);
 
   const createFile = useCallback(() => {
-    setInlineInput({ parentPath: getCreationParentPath(), type: 'file' });
-  }, [getCreationParentPath]);
+    const parentPath = getCreationParentPath();
+    setExpanded(prev => new Set(prev).add(parentPath));
+    loadDir(parentPath);
+    setInlineInput({ parentPath, type: 'file' });
+  }, [getCreationParentPath, loadDir]);
 
   const submitInlineInput = useCallback(async (name: string) => {
     if (!inlineInput || !name.trim()) { setInlineInput(null); return; }
@@ -1220,13 +1226,17 @@ export function FileExplorer({ rpc, connected, onFileClick, onOpenDiff, onFileCh
 
   const ctxNewFile = useCallback((folder: string) => {
     setContextMenu(null);
+    setExpanded(prev => new Set(prev).add(folder));
+    loadDir(folder);
     setInlineInput({ parentPath: folder, type: 'file' });
-  }, []);
+  }, [loadDir]);
 
   const ctxNewFolder = useCallback((folder: string) => {
     setContextMenu(null);
+    setExpanded(prev => new Set(prev).add(folder));
+    loadDir(folder);
     setInlineInput({ parentPath: folder, type: 'folder' });
-  }, []);
+  }, [loadDir]);
 
   // ── Git mode ────────────────────────────────────────────────────
   if (mode === 'git') {
@@ -1288,6 +1298,7 @@ export function FileExplorer({ rpc, connected, onFileClick, onOpenDiff, onFileCh
         if (!nameMatches && (!isDir || !subtreeMatches(fullPath))) continue;
       }
       const isDot = entry.name.startsWith('.');
+      const isBeingRenamed = inlineInput?.type === 'rename' && inlineInput.originalPath === fullPath;
 
       const gitStatus = gitFileMap.get(fullPath);
       const gitColor = gitStatus === 'D' ? 'text-destructive' :
@@ -1329,27 +1340,53 @@ export function FileExplorer({ rpc, connected, onFileClick, onOpenDiff, onFileCh
             <span className="w-3 shrink-0" />
           )}
           {isDir ? <Folder className="w-3 h-3 shrink-0 text-primary" /> : <File className="w-3 h-3 shrink-0" />}
-          <span className={cn('flex-1 truncate min-w-0', isDir && 'font-semibold', gitColor)}>{entry.name}</span>
-          {gitStatus && <span className={cn('text-[9px] font-mono shrink-0', gitColor)}>{gitStatus}</span>}
-          {entry.size != null && !gitStatus && <span className="text-[9px] text-muted-foreground shrink-0">{formatSize(entry.size)}</span>}
-          <span className="hidden group-hover:flex items-center gap-0.5 shrink-0">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button className="p-0.5 hover:text-primary transition-colors" onClick={(e) => renameItem(fullPath, e)}>
-                  <Pencil className="w-2.5 h-2.5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="top" className="text-[10px]">Rename</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button className="p-0.5 hover:text-destructive transition-colors" onClick={(e) => deleteItem(fullPath, e)}>
-                  <Trash2 className="w-2.5 h-2.5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="top" className="text-[10px]">Delete</TooltipContent>
-            </Tooltip>
-          </span>
+          {isBeingRenamed ? (
+            <input
+              autoFocus
+              className="flex-1 bg-transparent border border-primary/50 rounded px-1 py-0 text-[11px] outline-none focus:border-primary min-w-0"
+              defaultValue={entry.name}
+              onFocus={(e) => {
+                const name = e.target.value;
+                const dotIdx = name.lastIndexOf('.');
+                e.target.setSelectionRange(0, dotIdx > 0 ? dotIdx : name.length);
+              }}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === 'Enter') submitInlineInput((e.target as HTMLInputElement).value);
+                if (e.key === 'Escape') setInlineInput(null);
+              }}
+              onBlur={(e) => {
+                const val = e.target.value.trim();
+                if (val && val !== entry.name) submitInlineInput(val);
+                else setInlineInput(null);
+              }}
+              onClick={(e) => e.stopPropagation()}
+            />
+          ) : (
+            <>
+              <span className={cn('flex-1 truncate min-w-0', isDir && 'font-semibold', gitColor)}>{entry.name}</span>
+              {gitStatus && <span className={cn('text-[9px] font-mono shrink-0', gitColor)}>{gitStatus}</span>}
+              {entry.size != null && !gitStatus && <span className="text-[9px] text-muted-foreground shrink-0">{formatSize(entry.size)}</span>}
+              <span className="hidden group-hover:flex items-center gap-0.5 shrink-0">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button className="p-0.5 hover:text-primary transition-colors" onClick={(e) => renameItem(fullPath, e)}>
+                      <Pencil className="w-2.5 h-2.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="text-[10px]">Rename</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button className="p-0.5 hover:text-destructive transition-colors" onClick={(e) => deleteItem(fullPath, e)}>
+                      <Trash2 className="w-2.5 h-2.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="text-[10px]">Delete</TooltipContent>
+                </Tooltip>
+              </span>
+            </>
+          )}
         </div>
       );
 
@@ -1358,13 +1395,40 @@ export function FileExplorer({ rpc, connected, onFileClick, onOpenDiff, onFileCh
       }
     }
 
+    // In-place input for new file/folder
+    if (inlineInput && inlineInput.type !== 'rename' && inlineInput.parentPath === parentPath) {
+      items.push(
+        <div key="__inline_input__" className="flex items-center gap-1.5 py-0.5 px-1 text-[11px]" style={{ paddingLeft: Math.min(depth * 16, 128) + 12 }}>
+          {inlineInput.type === 'folder' ? <Folder className="w-3 h-3 shrink-0 text-primary" /> : <File className="w-3 h-3 shrink-0" />}
+          <input
+            autoFocus
+            className="flex-1 bg-transparent border border-primary/50 rounded px-1 py-0 text-[11px] outline-none focus:border-primary min-w-0"
+            placeholder={inlineInput.type === 'folder' ? 'Folder name...' : 'File name...'}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === 'Enter') submitInlineInput((e.target as HTMLInputElement).value);
+              if (e.key === 'Escape') setInlineInput(null);
+            }}
+            onBlur={(e) => {
+              const val = e.target.value.trim();
+              if (val) submitInlineInput(val);
+              else setInlineInput(null);
+            }}
+          />
+        </div>
+      );
+    }
+
     return items;
   };
 
   const crumbs = viewRoot ? buildCrumbs(homeCwd, viewRoot) : [];
 
   return (
-    <div className="flex flex-col h-full min-h-0 border border-transparent focus-within:border-primary/60 focus-within:ring-1 focus-within:ring-primary/35">
+    <div className="flex flex-col h-full min-h-0 border border-transparent focus-within:border-primary/60 focus-within:ring-1 focus-within:ring-primary/35" onMouseDown={(e) => {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'BUTTON') focusTree();
+    }}>
       <div className="group/explorer-header flex items-center gap-1 px-3 py-2 border-b border-border shrink-0">
         <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground shrink-0">Files</span>
         <div className="flex items-center gap-0.5 text-[10px] text-muted-foreground flex-1 min-w-0 overflow-hidden ml-1">
@@ -1425,29 +1489,6 @@ export function FileExplorer({ rpc, connected, onFileClick, onOpenDiff, onFileCh
           onMouseDown={() => focusTree()}
         >
           {viewRoot ? renderEntries(viewRoot, 0) : <div className="text-[11px] text-muted-foreground p-3">loading...</div>}
-          {/* Inline input for new file/folder/rename */}
-          {inlineInput && (
-            <div className="flex items-center gap-1.5 py-0.5 px-1 text-[11px]" style={{ paddingLeft: 12 }}>
-              {inlineInput.type === 'folder' ? <Folder className="w-3 h-3 shrink-0 text-primary" /> :
-               inlineInput.type === 'file' ? <File className="w-3 h-3 shrink-0" /> :
-               <Pencil className="w-3 h-3 shrink-0 text-muted-foreground" />}
-              <input
-                autoFocus
-                className="flex-1 bg-transparent border border-primary/50 rounded px-1 py-0 text-[11px] outline-none focus:border-primary min-w-0"
-                defaultValue={inlineInput.defaultValue || ''}
-                placeholder={inlineInput.type === 'rename' ? 'New name...' : inlineInput.type === 'folder' ? 'Folder name...' : 'File name...'}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') submitInlineInput((e.target as HTMLInputElement).value);
-                  if (e.key === 'Escape') setInlineInput(null);
-                }}
-                onBlur={(e) => {
-                  const val = e.target.value.trim();
-                  if (val && val !== (inlineInput.defaultValue || '')) submitInlineInput(val);
-                  else setInlineInput(null);
-                }}
-              />
-            </div>
-          )}
         </div>
       </ScrollArea>
 

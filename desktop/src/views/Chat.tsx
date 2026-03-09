@@ -721,12 +721,15 @@ export function ChatView({ gateway, chatItems, agentStatus, pendingQuestion, ses
   }, [chatItems]);
 
   useEffect(() => {
+    if (!isEmpty) return;
     const el = landingRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(([e]) => setCompact(e.contentRect.height < 360));
+    const ro = new ResizeObserver(([e]) => {
+      if (e.contentRect.height > 0) setCompact(e.contentRect.height < 360);
+    });
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [isEmpty]);
 
   const addImagesFromFiles = useCallback((files: FileList | File[]) => {
     const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
