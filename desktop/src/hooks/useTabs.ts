@@ -103,8 +103,7 @@ function loadTabsFromStorage(): Tab[] {
     const parsed = JSON.parse(raw) as Tab[];
     if (!Array.isArray(parsed) || parsed.length === 0) return [];
     return parsed
-      // strip terminal tabs with empty shellId (can't restore shells across restarts)
-      .filter((tab) => !((tab as any).type === 'terminal' && !(tab as any).shellId))
+      // Terminal tabs are kept; TerminalView re-spawns/reclaims the shell on mount
       .map((tab) => {
         if ((tab as any).type === 'plans' || (tab as any).type === 'ideas' || (tab as any).type === 'roadmap') {
           return {
@@ -296,7 +295,7 @@ export function useTabs(gw: ReturnType<typeof useGateway>, layout: ReturnType<ty
     // Strip large content from diff/terminal tabs before persisting
     const serializable = tabs.map(t => {
       if (t.type === 'diff') return { ...t, oldContent: '', newContent: '' };
-      if (t.type === 'terminal') return { ...t, shellId: '' }; // can't restore shells
+      if (t.type === 'terminal') return { ...t }; // shellId preserved; TerminalView reclaims on mount
       return t;
     });
     try {

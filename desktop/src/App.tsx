@@ -238,7 +238,15 @@ export default function App() {
   const [showFiles, setShowFiles] = useState(() => localStorage.getItem('dorabot:showFiles') === 'true');
   const [sidebarView, setSidebarView] = useState<'files' | 'git' | 'history'>(() => (localStorage.getItem('dorabot:sidebarView') as 'files' | 'git' | 'history') || 'files');
   const filesPanelSize = useRef(localStorage.getItem('dorabot:filesPanelSize') || '30%');
-  const fileExplorerStateRef = useRef<{ viewRoot: string; expanded: string[]; selectedPath: string | null }>({ viewRoot: '', expanded: [], selectedPath: null });
+  const fileExplorerStateRef = useRef<{ viewRoot: string; expanded: string[]; selectedPath: string | null }>(
+    (() => {
+      try {
+        const raw = localStorage.getItem('dorabot:explorerState');
+        if (raw) return JSON.parse(raw) as { viewRoot: string; expanded: string[]; selectedPath: string | null };
+      } catch { /* ignore */ }
+      return { viewRoot: '', expanded: [], selectedPath: null };
+    })()
+  );
   const [sessionFilter, setSessionFilter] = useState<SessionFilter>('all');
   const [selectedChannel, setSelectedChannel] = useState<'whatsapp' | 'telegram'>('whatsapp');
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -1592,7 +1600,10 @@ export default function App() {
                   initialViewRoot={fileExplorerStateRef.current.viewRoot || undefined}
                   initialExpanded={fileExplorerStateRef.current.expanded}
                   initialSelectedPath={fileExplorerStateRef.current.selectedPath}
-                  onStateChange={(s) => { fileExplorerStateRef.current = s; }}
+                  onStateChange={(s) => {
+                    fileExplorerStateRef.current = s;
+                    try { localStorage.setItem('dorabot:explorerState', JSON.stringify(s)); } catch { /* quota */ }
+                  }}
                 />
               )}
             </ResizablePanel>

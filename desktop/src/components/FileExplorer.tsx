@@ -841,6 +841,7 @@ export function FileExplorer({ rpc, connected, onFileClick, onOpenDiff, onFileCh
   const [fileFilter, setFileFilter] = useState('');
 
   const [gitState, setGitState] = useState<GitState | null>(null);
+  const gitBranchRef = useRef<string | undefined>(undefined);
   const gitPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const treeRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -849,12 +850,19 @@ export function FileExplorer({ rpc, connected, onFileClick, onOpenDiff, onFileCh
     treeRef.current?.focus();
   }, []);
 
+  const reloadTreeRef = useRef<() => void>(() => {});
+
   const fetchGitStatus = useCallback(async () => {
     if (!connected || !viewRoot) return;
     try {
       const detectRes = await rpc('git.detect', { path: viewRoot }) as { root: string | null };
       if (!detectRes?.root) { setGitState(null); return; }
       const statusRes = await rpc('git.status', { path: detectRes.root }) as GitState;
+      // Branch changed: reload file tree so UI reflects new branch contents
+      if (gitBranchRef.current && statusRes.branch !== gitBranchRef.current) {
+        reloadTreeRef.current();
+      }
+      gitBranchRef.current = statusRes.branch;
       setGitState(statusRes);
     } catch {
       setGitState(null);
@@ -902,6 +910,12 @@ export function FileExplorer({ rpc, connected, onFileClick, onOpenDiff, onFileCh
       });
     }
   }, [rpc]);
+
+  // Keep ref current so fetchGitStatus can reload tree without a dep on loadDir/expanded
+  reloadTreeRef.current = () => {
+    if (viewRoot) loadDir(viewRoot);
+    expanded.forEach(dir => loadDir(dir));
+  };
 
   useEffect(() => {
     if (!connected) return;
