@@ -383,8 +383,8 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
       if (event.event === 'agent.stream') {
         queueStreamEvent(ws, data);
       } else {
-        // flush pending stream batch before tool_result so client has the tool_use item
-        if (event.event === 'agent.tool_result') flushStreamBatch(ws);
+        // flush pending stream batch before tool_result/done so client has all deltas
+        if (event.event === 'agent.tool_result' || event.event === 'agent.done') flushStreamBatch(ws);
         ws.send(data);
       }
     }
