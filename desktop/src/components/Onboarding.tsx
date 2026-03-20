@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { dorabotComputerImg, dorabotImg, whatsappImg, telegramImg } from '../assets';
+import { DorabotSprite } from './DorabotSprite';
 import type { useGateway } from '../hooks/useGateway';
 import { ProviderSetup } from './ProviderSetup';
 import { FlipWords } from './aceternity/flip-words';
@@ -12,7 +13,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import {
   Check, Loader2, Monitor, Hand, HardDrive, ChevronRight, ChevronLeft,
   MessageSquare, Sparkles, Brain, Zap, LayoutGrid, ArrowRight,
-  Eye, EyeOff, Globe, User, Smartphone,
+  Eye, EyeOff, Globe, User, Smartphone, AlertTriangle, RefreshCw,
 } from 'lucide-react';
 
 type ProfileData = { name?: string; timezone?: string };
@@ -121,6 +122,7 @@ export function OnboardingOverlay({ gateway, onComplete }: Props) {
   const [authInfo, setAuthInfo] = useState<{ method?: string; identity?: string } | null>(null);
   const [detectResult, setDetectResult] = useState<DetectResult | null>(null);
   const [direction, setDirection] = useState(1);
+  const [detectError, setDetectError] = useState<string | null>(null);
 
   // Profile state
   const [profileName, setProfileName] = useState('');
@@ -170,14 +172,21 @@ export function OnboardingOverlay({ gateway, onComplete }: Props) {
     goTo('launch');
   }, [goTo]);
 
-  // Provider detection
+  // Provider detection with timeout and error handling
   const runDetection = useCallback(async () => {
     if (detectRan.current) return;
     detectRan.current = true;
+    setDetectError(null);
     goTo('detecting');
 
     try {
-      const result = await gateway.detectProviders();
+      // Race detection against a 20s timeout
+      const result = await Promise.race([
+        gateway.detectProviders(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Detection timed out. Your system may be slow to respond.')), 20000)
+        ),
+      ]);
       setDetectResult(result);
 
       if (result.claude.hasOAuth || result.claude.hasApiKey) {
@@ -186,7 +195,6 @@ export function OnboardingOverlay({ gateway, onComplete }: Props) {
           method: result.claude.hasOAuth ? 'oauth' : 'api_key',
           identity: result.claude.hasOAuth ? 'Claude subscription' : 'API key',
         });
-        // Auto-detected, skip auth steps
         setTimeout(() => goTo('profile'), 800);
         return;
       }
@@ -199,8 +207,11 @@ export function OnboardingOverlay({ gateway, onComplete }: Props) {
       }
 
       goTo('choose');
-    } catch {
-      goTo('choose');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Detection failed';
+      setDetectError(msg);
+      // Allow retry
+      detectRan.current = false;
     }
   }, [gateway, goTo]);
 
@@ -262,7 +273,7 @@ export function OnboardingOverlay({ gateway, onComplete }: Props) {
 
               {step === 'detecting' && (
                 <PageTransition key="detecting" direction={direction}>
-                  <DetectingStep />
+                  <DetectingStep error={detectError} onRetry={() => { detectRan.current = false; runDetection(); }} onSkip={() => goTo('choose')} />
                 </PageTransition>
               )}
 
@@ -365,8 +376,8 @@ function WelcomeStep({ onContinue }: { onContinue: () => void }) {
         animate={{ scale: 1, opacity: 1 }}
         transition={{ duration: 0.5, ease: 'easeOut' }}
       >
-        <div className="absolute inset-0 rounded-full bg-primary/20 blur-2xl animate-pulse" style={{ width: 120, height: 120, margin: '-10px' }} />
-        <img src={dorabotComputerImg} alt="dorabot" className="relative w-24 h-24 dorabot-alive" />
+        <div className="absolute inset-[-12px] rounded-full bg-primary/20 blur-2xl animate-pulse" />
+        <DorabotSprite size={80} className="relative dorabot-alive" />
       </motion.div>
 
       <motion.div
@@ -407,12 +418,34 @@ function WelcomeStep({ onContinue }: { onContinue: () => void }) {
   );
 }
 
-function DetectingStep() {
+function DetectingStep({ error, onRetry, onSkip }: { error: string | null; onRetry: () => void; onSkip: () => void }) {
+  if (error) {
+    return (
+      <div className="flex flex-col items-center gap-4 py-8">
+        <div className="w-12 h-12 rounded-full bg-destructive/10 flex items-center justify-center">
+          <AlertTriangle className="w-6 h-6 text-destructive" />
+        </div>
+        <div className="text-center space-y-1.5">
+          <div className="text-sm font-medium text-foreground">Something went wrong</div>
+          <div className="text-[11px] text-muted-foreground max-w-xs">{error}</div>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="default" size="sm" className="h-8 text-xs gap-1.5" onClick={onRetry}>
+            <RefreshCw className="w-3 h-3" />try again
+          </Button>
+          <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={onSkip}>
+            skip detection
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col items-center gap-4 py-8">
       <div className="relative w-20 h-20 mx-auto">
         <div className="absolute inset-0 rounded-full bg-success/30 blur-xl animate-pulse" />
-        <img src={dorabotComputerImg} alt="dorabot" className="relative w-20 h-20 dorabot-alive" />
+        <DorabotSprite size={80} className="relative dorabot-alive" />
       </div>
       <Loader2 className="w-5 h-5 text-primary animate-spin" />
       <TextGenerateEffect
@@ -452,13 +485,14 @@ function ChooseStep({
   const claudeLoggedIn = detect?.claude.hasOAuth || detect?.claude.hasApiKey;
   const claudeInstalled = detect?.claude.installed;
   const codexLoggedIn = detect?.codex.hasAuth;
+  const codexInstalled = detect?.codex.installed;
 
   return (
     <div className="space-y-5">
       <div className="text-center space-y-3">
         <div className="relative w-20 h-20 mx-auto">
           <div className="absolute inset-0 rounded-full bg-success/30 blur-xl animate-pulse" />
-          <img src={dorabotComputerImg} alt="dorabot" className="relative w-20 h-20 dorabot-alive" />
+          <DorabotSprite size={80} className="relative dorabot-alive" />
         </div>
         <div>
           <h1 className="text-base font-semibold text-foreground">Connect your AI</h1>
@@ -496,8 +530,17 @@ function ChooseStep({
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold text-foreground">Sign in with ChatGPT</span>
               {codexLoggedIn && <DetectionBadge type="logged-in" />}
+              {!codexLoggedIn && codexInstalled === false && (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-medium bg-destructive/10 text-destructive">
+                  needs CLI setup
+                </span>
+              )}
             </div>
-            <div className="text-[10px] text-muted-foreground mt-0.5">Use your OpenAI account (ChatGPT Plus required)</div>
+            <div className="text-[10px] text-muted-foreground mt-0.5">
+              {codexInstalled === false
+                ? 'Requires Codex CLI (npm i -g @openai/codex). Or use an API key below.'
+                : 'Use your OpenAI account (ChatGPT Plus required)'}
+            </div>
           </div>
           <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-primary shrink-0 mt-2 transition-colors" />
         </button>
@@ -1252,7 +1295,7 @@ function LaunchStep({
         transition={{ duration: 0.4, ease: 'easeOut' }}
       >
         <div className="absolute inset-0 rounded-full bg-success/30 blur-2xl animate-pulse" style={{ width: 100, height: 100, margin: '-10px' }} />
-        <img src={dorabotImg} alt="dorabot" className="relative w-20 h-20 dorabot-alive" />
+        <DorabotSprite size={80} className="relative dorabot-alive" />
       </motion.div>
 
       <motion.div

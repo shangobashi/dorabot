@@ -8,22 +8,48 @@ import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Card, CardContent } from '@/components/ui/card';
+import { Separator } from '@/components/ui/separator';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/utils';
 import {
   Plus, Trash2, Pencil, Sparkles, Save, ArrowLeft,
   Search, Terminal, KeyRound, CheckCircle2, XCircle,
-  Package, User, Slash, Eye, CircleDot
+  Package, User, Slash, Eye, CircleDot, Download,
+  Star, FolderTree, FileText, ChevronRight, ExternalLink,
+  Loader2, Globe, Compass, FolderOpen, File
 } from 'lucide-react';
+
+// ── types ──────────────────────────────────────────────────────────
+
+type SkillFile = {
+  relativePath: string;
+  size: number;
+};
 
 type SkillInfo = {
   name: string;
   description: string;
   path: string;
+  dir: string;
   userInvocable: boolean;
   metadata: { requires?: { bins?: string[]; env?: string[] } };
   eligibility: { eligible: boolean; reasons: string[] };
   builtIn: boolean;
+  files: SkillFile[];
+};
+
+type RegistrySkill = {
+  name: string;
+  description: string;
+  repo: string;
+  skillPath: string;
+  stars: number;
+  installs: number;
+  category: string;
+  avatar: string;
 };
 
 type SkillForm = {
@@ -44,23 +70,34 @@ const emptyForm: SkillForm = {
   content: '',
 };
 
+const REGISTRY_URL = 'https://raw.githubusercontent.com/suitedaces/dorabot/main/skills-registry.json';
+
 type Filter = 'all' | 'built-in' | 'custom';
 
 type Props = {
   gateway: ReturnType<typeof useGateway>;
 };
 
+// ── main view ──────────────────────────────────────────────────────
+
 export function SkillsView({ gateway }: Props) {
   const [skills, setSkills] = useState<SkillInfo[]>([]);
+  const [registry, setRegistry] = useState<RegistrySkill[]>([]);
   const [loading, setLoading] = useState(true);
-  const [mode, setMode] = useState<'list' | 'create' | 'edit' | 'detail'>('list');
+  const [registryLoading, setRegistryLoading] = useState(true);
+  const [mode, setMode] = useState<'list' | 'create' | 'edit' | 'detail' | 'registry-detail'>('list');
   const [form, setForm] = useState<SkillForm>(emptyForm);
   const [editingName, setEditingName] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   const [selectedSkill, setSelectedSkill] = useState<SkillInfo | null>(null);
+  const [selectedRegistrySkill, setSelectedRegistrySkill] = useState<RegistrySkill | null>(null);
   const [detailContent, setDetailContent] = useState<string>('');
+  const [activeTab, setActiveTab] = useState<'installed' | 'discover'>('installed');
+  const [installing, setInstalling] = useState<string | null>(null);
+  const [discoverSearch, setDiscoverSearch] = useState('');
+  const [discoverCategory, setDiscoverCategory] = useState<string>('all');
 
   const loadSkills = useCallback(async () => {
     if (gateway.connectionState !== 'connected') return;
@@ -74,9 +111,24 @@ export function SkillsView({ gateway }: Props) {
     }
   }, [gateway.connectionState, gateway.rpc]);
 
-  useEffect(() => {
-    loadSkills();
-  }, [loadSkills]);
+  const loadRegistry = useCallback(async () => {
+    try {
+      const res = await fetch(REGISTRY_URL);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) setRegistry(data);
+      }
+    } catch (err) {
+      console.error('failed to load registry:', err);
+    } finally {
+      setRegistryLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadSkills(); }, [loadSkills]);
+  useEffect(() => { loadRegistry(); }, [loadRegistry]);
+
+  const installedNames = useMemo(() => new Set(skills.map(s => s.name)), [skills]);
 
   const filtered = useMemo(() => {
     let list = skills;
@@ -85,7 +137,7 @@ export function SkillsView({ gateway }: Props) {
     if (search) {
       const q = search.toLowerCase();
       list = list.filter(s =>
-        s.name.includes(q) || s.description.toLowerCase().includes(q)
+        s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q)
       );
     }
     return list;
@@ -96,6 +148,23 @@ export function SkillsView({ gateway }: Props) {
     'built-in': skills.filter(s => s.builtIn).length,
     custom: skills.filter(s => !s.builtIn).length,
   }), [skills]);
+
+  const categories = useMemo(() => {
+    const cats = new Set(registry.map(s => s.category));
+    return ['all', ...Array.from(cats).sort()];
+  }, [registry]);
+
+  const filteredRegistry = useMemo(() => {
+    let list = registry;
+    if (discoverCategory !== 'all') list = list.filter(s => s.category === discoverCategory);
+    if (discoverSearch) {
+      const q = discoverSearch.toLowerCase();
+      list = list.filter(s =>
+        s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [registry, discoverCategory, discoverSearch]);
 
   const openCreate = () => {
     setForm(emptyForm);
@@ -114,6 +183,11 @@ export function SkillsView({ gateway }: Props) {
       setDetailContent('');
     }
     setMode('detail');
+  };
+
+  const openRegistryDetail = (skill: RegistrySkill) => {
+    setSelectedRegistrySkill(skill);
+    setMode('registry-detail');
   };
 
   const openEdit = (skill: SkillInfo) => {
@@ -195,6 +269,22 @@ export function SkillsView({ gateway }: Props) {
     }
   };
 
+  const installSkill = async (regSkill: RegistrySkill) => {
+    setInstalling(regSkill.name);
+    try {
+      await gateway.rpc('skills.install', {
+        repo: regSkill.repo,
+        skillPath: regSkill.skillPath,
+        name: regSkill.name,
+      });
+      setTimeout(loadSkills, 200);
+    } catch (err) {
+      console.error('failed to install skill:', err);
+    } finally {
+      setInstalling(null);
+    }
+  };
+
   const canSave = form.name && form.description && form.content;
 
   if (gateway.connectionState !== 'connected') {
@@ -206,158 +296,38 @@ export function SkillsView({ gateway }: Props) {
     );
   }
 
-  if (loading) {
-    return (
-      <div className="p-4 space-y-3">
-        <div className="flex gap-2">
-          <Skeleton className="h-8 w-48" />
-          <Skeleton className="h-8 w-32 ml-auto" />
-        </div>
-        <div className="grid grid-cols-1 @md:grid-cols-2 gap-3">
-          {[1, 2, 3, 4].map(i => (
-            <Skeleton key={i} className="h-32 w-full rounded-lg" />
-          ))}
-        </div>
-      </div>
-    );
-  }
+  // ── detail view (installed skill) ──────────────────────────────
 
-  // detail view
   if (mode === 'detail' && selectedSkill) {
-    const skill = selectedSkill;
-    const hasReqs = skill.metadata.requires?.bins?.length || skill.metadata.requires?.env?.length;
-
     return (
-      <div className="flex flex-col h-full min-h-0">
-        <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border shrink-0">
-          <Button variant="ghost" size="sm" className="h-7 text-xs px-2" onClick={() => { setMode('list'); setSelectedSkill(null); }}>
-            <ArrowLeft className="w-3.5 h-3.5 mr-1" />skills
-          </Button>
-          <div className="ml-auto flex items-center gap-1.5">
-            {!skill.builtIn && (
-              <>
-                <Button variant="outline" size="sm" className="h-7 text-xs px-3" onClick={() => openEdit(skill)}>
-                  <Pencil className="w-3 h-3 mr-1.5" />edit
-                </Button>
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button variant="ghost" size="sm" className="h-7 text-xs px-2 text-destructive hover:text-destructive">
-                      <Trash2 className="w-3 h-3" />
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle className="text-sm">delete "{skill.name}"?</AlertDialogTitle>
-                      <AlertDialogDescription className="text-xs">removes from ~/.dorabot/skills/. cannot be undone.</AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel className="h-7 text-xs">cancel</AlertDialogCancel>
-                      <AlertDialogAction className="h-7 text-xs" onClick={() => deleteSkill(skill.name)}>delete</AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-              </>
-            )}
-            {skill.builtIn && (
-              <Button variant="outline" size="sm" className="h-7 text-xs px-3" onClick={() => openEdit(skill)}>
-                <Eye className="w-3 h-3 mr-1.5" />view source
-              </Button>
-            )}
-          </div>
-        </div>
-
-        <ScrollArea className="flex-1 min-h-0">
-          <div className="p-5 max-w-2xl space-y-5">
-            {/* header */}
-            <div>
-              <div className="flex items-center gap-2.5 mb-2">
-                <div className={cn(
-                  'w-9 h-9 rounded-lg flex items-center justify-center shrink-0',
-                  skill.eligibility.eligible ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
-                )}>
-                  <Sparkles className="w-4.5 h-4.5" />
-                </div>
-                <div>
-                  <h2 className="text-base font-semibold leading-tight">{skill.name}</h2>
-                  {skill.userInvocable && (
-                    <span className="text-[11px] text-muted-foreground font-mono">/{skill.name}</span>
-                  )}
-                </div>
-              </div>
-              <p className="text-xs text-muted-foreground leading-relaxed mt-2">{skill.description}</p>
-            </div>
-
-            {/* meta grid */}
-            <div className="grid grid-cols-1 @sm:grid-cols-2 gap-3">
-              <MetaItem
-                icon={skill.eligibility.eligible ? CheckCircle2 : XCircle}
-                label="status"
-                value={skill.eligibility.eligible ? 'ready' : 'unavailable'}
-                className={skill.eligibility.eligible ? 'text-success' : 'text-destructive'}
-              />
-              <MetaItem
-                icon={skill.builtIn ? Package : User}
-                label="source"
-                value={skill.builtIn ? 'built-in' : 'custom'}
-              />
-              <MetaItem
-                icon={Slash}
-                label="invocable"
-                value={skill.userInvocable ? 'yes' : 'no'}
-              />
-              <MetaItem
-                icon={CircleDot}
-                label="path"
-                value={skill.path.replace(/.*\/skills\//, 'skills/')}
-                mono
-              />
-            </div>
-
-            {/* eligibility issues */}
-            {!skill.eligibility.eligible && skill.eligibility.reasons.length > 0 && (
-              <div className="bg-destructive/5 border border-destructive/20 rounded-lg p-3 space-y-1">
-                <span className="text-[11px] font-medium text-destructive">missing requirements</span>
-                {skill.eligibility.reasons.map((r, i) => (
-                  <div key={i} className="text-[11px] text-destructive/80">{r}</div>
-                ))}
-              </div>
-            )}
-
-            {/* requirements */}
-            {hasReqs && (
-              <div className="space-y-2">
-                <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">requirements</span>
-                <div className="flex flex-wrap gap-1.5">
-                  {skill.metadata.requires?.bins?.map(b => (
-                    <span key={b} className="inline-flex items-center gap-1 text-[11px] font-mono bg-secondary rounded-md px-2 py-1 border border-border">
-                      <Terminal className="w-3 h-3 text-muted-foreground" />{b}
-                    </span>
-                  ))}
-                  {skill.metadata.requires?.env?.map(e => (
-                    <span key={e} className="inline-flex items-center gap-1 text-[11px] font-mono bg-secondary rounded-md px-2 py-1 border border-border">
-                      <KeyRound className="w-3 h-3 text-muted-foreground" />{e}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* content preview */}
-            {detailContent && (
-              <div className="space-y-2">
-                <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">skill content</span>
-                <pre className="text-[11px] font-mono leading-relaxed bg-secondary/50 rounded-lg p-3 border border-border overflow-x-auto whitespace-pre-wrap break-words max-h-[400px] overflow-y-auto">
-                  {detailContent}
-                </pre>
-              </div>
-            )}
-          </div>
-        </ScrollArea>
-      </div>
+      <InstalledDetailView
+        skill={selectedSkill}
+        detailContent={detailContent}
+        gateway={gateway}
+        onBack={() => { setMode('list'); setSelectedSkill(null); }}
+        onEdit={() => openEdit(selectedSkill)}
+        onDelete={deleteSkill}
+      />
     );
   }
 
-  // create / edit form
+  // ── detail view (registry skill) ──────────────────────────────
+
+  if (mode === 'registry-detail' && selectedRegistrySkill) {
+    const isInstalled = installedNames.has(selectedRegistrySkill.name);
+    return (
+      <RegistryDetailView
+        skill={selectedRegistrySkill}
+        installed={isInstalled}
+        installing={installing === selectedRegistrySkill.name}
+        onBack={() => { setMode('list'); setSelectedRegistrySkill(null); }}
+        onInstall={() => installSkill(selectedRegistrySkill)}
+      />
+    );
+  }
+
+  // ── create / edit form ─────────────────────────────────────────
+
   if (mode === 'create' || mode === 'edit') {
     const isBuiltIn = mode === 'edit' && selectedSkill?.builtIn;
 
@@ -375,8 +345,6 @@ export function SkillsView({ gateway }: Props) {
 
         <ScrollArea className="flex-1 min-h-0">
           <div className="p-5 space-y-5 max-w-2xl">
-
-            {/* identity section */}
             <div className="space-y-3">
               <SectionHeader>identity</SectionHeader>
               <div className="grid grid-cols-1 gap-3">
@@ -390,7 +358,6 @@ export function SkillsView({ gateway }: Props) {
                     disabled={mode === 'edit'}
                   />
                 </div>
-
                 <div className="space-y-1.5">
                   <Label className="text-[11px] text-muted-foreground">description</Label>
                   <Input
@@ -404,7 +371,6 @@ export function SkillsView({ gateway }: Props) {
               </div>
             </div>
 
-            {/* settings section */}
             <div className="space-y-3">
               <SectionHeader>settings</SectionHeader>
               <div className="flex items-center justify-between bg-secondary/30 rounded-lg px-3 py-2.5 border border-border">
@@ -421,7 +387,6 @@ export function SkillsView({ gateway }: Props) {
               </div>
             </div>
 
-            {/* requirements section */}
             <div className="space-y-3">
               <SectionHeader>requirements</SectionHeader>
               <div className="grid grid-cols-1 @sm:grid-cols-2 gap-3">
@@ -454,7 +419,6 @@ export function SkillsView({ gateway }: Props) {
               </div>
             </div>
 
-            {/* content section */}
             <div className="space-y-3">
               <SectionHeader>content</SectionHeader>
               <Textarea
@@ -484,109 +448,184 @@ export function SkillsView({ gateway }: Props) {
     );
   }
 
-  // list view
-  const builtInSkills = filtered.filter(s => s.builtIn);
-  const customSkills = filtered.filter(s => !s.builtIn);
+  // ── main tabbed view ───────────────────────────────────────────
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      {/* header */}
-      <div className="px-4 py-3 border-b border-border shrink-0 space-y-2.5">
-        <div className="flex items-center gap-2">
-          <h1 className="font-semibold text-sm">Skills</h1>
-          <Badge variant="secondary" className="text-[10px] h-4 px-1.5">{skills.length}</Badge>
-          <Button
-            variant="default"
-            size="sm"
-            className="ml-auto h-7 text-xs px-3"
-            onClick={openCreate}
-          >
-            <Plus className="w-3.5 h-3.5 mr-1" />new skill
-          </Button>
+      <Tabs value={activeTab} onValueChange={v => setActiveTab(v as 'installed' | 'discover')} className="flex flex-col h-full min-h-0">
+        <div className="px-4 pt-3 pb-0 shrink-0">
+          <TabsList className="w-full h-9">
+            <TabsTrigger value="installed" className="gap-1.5 text-xs">
+              <Package className="w-3.5 h-3.5" />
+              Installed
+              <Badge variant="secondary" className="text-[9px] h-4 px-1.5 ml-0.5">{skills.length}</Badge>
+            </TabsTrigger>
+            <TabsTrigger value="discover" className="gap-1.5 text-xs">
+              <Compass className="w-3.5 h-3.5" />
+              Discover
+            </TabsTrigger>
+          </TabsList>
         </div>
 
-        <div className="flex items-center gap-2">
-          <div className="relative flex-1">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-            <Input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="search skills..."
-              className="h-7 text-xs pl-7 pr-2"
-            />
-          </div>
-          <div className="flex items-center bg-secondary/50 rounded-md p-0.5">
-            {(['all', 'built-in', 'custom'] as Filter[]).map(f => (
-              <button
-                key={f}
-                onClick={() => setFilter(f)}
-                className={cn(
-                  'px-2 py-1 rounded text-[11px] transition-colors',
-                  filter === f
-                    ? 'bg-background text-foreground shadow-sm font-medium'
-                    : 'text-muted-foreground hover:text-foreground'
-                )}
-              >
-                {f} <span className="text-[10px] opacity-60">{counts[f]}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <ScrollArea className="flex-1 min-h-0">
-        {filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-muted-foreground gap-3">
-            <div className="w-12 h-12 rounded-full bg-secondary flex items-center justify-center">
-              <Sparkles className="w-5 h-5 opacity-50" />
+        {/* ── installed tab ──────────────────────────────────────── */}
+        <TabsContent value="installed" className="flex-1 min-h-0 flex flex-col m-0">
+          <div className="px-4 py-2.5 shrink-0 space-y-2">
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                <Input
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="search installed skills..."
+                  className="h-7 text-xs pl-7 pr-2"
+                />
+              </div>
+              <Button variant="default" size="sm" className="h-7 text-xs px-3 shrink-0" onClick={openCreate}>
+                <Plus className="w-3.5 h-3.5 mr-1" />new
+              </Button>
             </div>
-            {search ? (
-              <>
-                <span className="text-sm">no skills match "{search}"</span>
-                <Button variant="ghost" size="sm" className="text-xs" onClick={() => setSearch('')}>clear search</Button>
-              </>
-            ) : (
-              <>
-                <span className="text-sm font-medium">no skills yet</span>
-                <span className="text-xs text-center max-w-xs">skills teach your agent new capabilities. create one to get started.</span>
-                <Button variant="outline" size="sm" className="text-xs mt-1" onClick={openCreate}>
-                  <Plus className="w-3 h-3 mr-1" />create your first skill
-                </Button>
-              </>
-            )}
+            <div className="flex items-center bg-secondary/50 rounded-md p-0.5 w-fit">
+              {(['all', 'built-in', 'custom'] as Filter[]).map(f => (
+                <button
+                  key={f}
+                  onClick={() => setFilter(f)}
+                  className={cn(
+                    'px-2 py-1 rounded text-[11px] transition-colors',
+                    filter === f
+                      ? 'bg-background text-foreground shadow-sm font-medium'
+                      : 'text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  {f} <span className="text-[10px] opacity-60">{counts[f]}</span>
+                </button>
+              ))}
+            </div>
           </div>
-        ) : (
-          <div className="p-4 space-y-5">
-            {/* custom skills first if they exist */}
-            {filter !== 'built-in' && customSkills.length > 0 && (
-              <SkillSection
-                label="custom"
-                count={customSkills.length}
-                skills={customSkills}
-                onClickSkill={openDetail}
-                onEditSkill={openEditFromList}
-                onDeleteSkill={deleteSkill}
-              />
-            )}
 
-            {filter !== 'custom' && builtInSkills.length > 0 && (
-              <SkillSection
-                label="built-in"
-                count={builtInSkills.length}
-                skills={builtInSkills}
-                onClickSkill={openDetail}
-                onEditSkill={openEditFromList}
-                onDeleteSkill={deleteSkill}
-              />
+          <ScrollArea className="flex-1 min-h-0">
+            {loading ? (
+              <div className="p-4 grid grid-cols-1 @md:grid-cols-2 gap-2">
+                {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-28 w-full rounded-lg" />)}
+              </div>
+            ) : filtered.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-muted-foreground gap-3">
+                <div className="w-12 h-12 rounded-full bg-secondary flex items-center justify-center">
+                  <Sparkles className="w-5 h-5 opacity-50" />
+                </div>
+                {search ? (
+                  <>
+                    <span className="text-sm">no skills match "{search}"</span>
+                    <Button variant="ghost" size="sm" className="text-xs" onClick={() => setSearch('')}>clear search</Button>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-sm font-medium">no skills yet</span>
+                    <span className="text-xs text-center max-w-xs">skills teach your agent new capabilities. create one or browse the discover tab.</span>
+                    <div className="flex gap-2 mt-1">
+                      <Button variant="outline" size="sm" className="text-xs" onClick={openCreate}>
+                        <Plus className="w-3 h-3 mr-1" />create
+                      </Button>
+                      <Button variant="default" size="sm" className="text-xs" onClick={() => setActiveTab('discover')}>
+                        <Compass className="w-3 h-3 mr-1" />discover
+                      </Button>
+                    </div>
+                  </>
+                )}
+              </div>
+            ) : (
+              <div className="p-4 space-y-4">
+                {filter !== 'built-in' && filtered.filter(s => !s.builtIn).length > 0 && (
+                  <InstalledSection
+                    label="custom"
+                    count={filtered.filter(s => !s.builtIn).length}
+                    skills={filtered.filter(s => !s.builtIn)}
+                    onClickSkill={openDetail}
+                    onEditSkill={openEditFromList}
+                    onDeleteSkill={deleteSkill}
+                  />
+                )}
+                {filter !== 'custom' && filtered.filter(s => s.builtIn).length > 0 && (
+                  <InstalledSection
+                    label="built-in"
+                    count={filtered.filter(s => s.builtIn).length}
+                    skills={filtered.filter(s => s.builtIn)}
+                    onClickSkill={openDetail}
+                    onEditSkill={openEditFromList}
+                    onDeleteSkill={deleteSkill}
+                  />
+                )}
+              </div>
             )}
+          </ScrollArea>
+        </TabsContent>
+
+        {/* ── discover tab ───────────────────────────────────────── */}
+        <TabsContent value="discover" className="flex-1 min-h-0 flex flex-col m-0">
+          <div className="px-4 py-2.5 shrink-0 space-y-2">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              <Input
+                value={discoverSearch}
+                onChange={e => setDiscoverSearch(e.target.value)}
+                placeholder="search community skills..."
+                className="h-8 text-xs pl-8 pr-2"
+              />
+            </div>
+            <div className="flex items-center gap-1 flex-wrap">
+              {categories.map(cat => (
+                <button
+                  key={cat}
+                  onClick={() => setDiscoverCategory(cat)}
+                  className={cn(
+                    'px-2 py-1 rounded-md text-[11px] transition-colors border',
+                    discoverCategory === cat
+                      ? 'bg-primary text-primary-foreground border-primary font-medium'
+                      : 'bg-secondary/50 text-muted-foreground border-transparent hover:text-foreground hover:bg-secondary'
+                  )}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
           </div>
-        )}
-      </ScrollArea>
+
+          <ScrollArea className="flex-1 min-h-0">
+            {registryLoading ? (
+              <div className="p-4 grid grid-cols-1 @md:grid-cols-2 gap-3">
+                {[1, 2, 3, 4, 5, 6].map(i => <Skeleton key={i} className="h-36 w-full rounded-lg" />)}
+              </div>
+            ) : filteredRegistry.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-muted-foreground gap-3">
+                <Globe className="w-8 h-8 opacity-40" />
+                <span className="text-sm">no skills found</span>
+                {discoverSearch && (
+                  <Button variant="ghost" size="sm" className="text-xs" onClick={() => setDiscoverSearch('')}>clear search</Button>
+                )}
+              </div>
+            ) : (
+              <div className="p-4 grid grid-cols-1 @md:grid-cols-2 gap-3">
+                {filteredRegistry.map(skill => (
+                  <RegistryCard
+                    key={skill.name}
+                    skill={skill}
+                    installed={installedNames.has(skill.name)}
+                    installing={installing === skill.name}
+                    onClick={() => openRegistryDetail(skill)}
+                    onInstall={() => installSkill(skill)}
+                  />
+                ))}
+              </div>
+            )}
+          </ScrollArea>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
 
-function SkillSection({ label, count, skills, onClickSkill, onEditSkill, onDeleteSkill }: {
+// ── installed skill card ─────────────────────────────────────────
+
+function InstalledSection({ label, count, skills, onClickSkill, onEditSkill, onDeleteSkill }: {
   label: string;
   count: number;
   skills: SkillInfo[];
@@ -602,7 +641,7 @@ function SkillSection({ label, count, skills, onClickSkill, onEditSkill, onDelet
       </div>
       <div className="grid grid-cols-1 @md:grid-cols-2 gap-2">
         {skills.map(skill => (
-          <SkillCard
+          <InstalledCard
             key={skill.name}
             skill={skill}
             onClick={() => onClickSkill(skill)}
@@ -615,94 +654,575 @@ function SkillSection({ label, count, skills, onClickSkill, onEditSkill, onDelet
   );
 }
 
-function SkillCard({ skill, onClick, onEdit, onDelete }: {
+function InstalledCard({ skill, onClick, onEdit, onDelete }: {
   skill: SkillInfo;
   onClick: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
-  const hasReqs = skill.metadata.requires?.bins?.length || skill.metadata.requires?.env?.length;
+  const fileCount = skill.files?.length || 0;
 
   return (
-    <button
+    <Card
+      className="group cursor-pointer transition-all hover:border-primary/30 hover:shadow-sm py-3"
       onClick={onClick}
-      className="group text-left w-full rounded-lg border border-border bg-card p-3 transition-all hover:border-primary/30 hover:shadow-sm space-y-2"
     >
-      {/* top row: name + status */}
-      <div className="flex items-start gap-2">
-        <div className={cn(
-          'w-7 h-7 rounded-md flex items-center justify-center shrink-0 mt-0.5 transition-colors',
-          skill.eligibility.eligible
-            ? 'bg-primary/10 text-primary group-hover:bg-primary/15'
-            : 'bg-muted text-muted-foreground'
-        )}>
-          <Sparkles className="w-3.5 h-3.5" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs font-semibold truncate">{skill.name}</span>
-            <div className={cn(
-              'w-1.5 h-1.5 rounded-full shrink-0',
-              skill.eligibility.eligible ? 'bg-success' : 'bg-destructive/60'
-            )} />
+      <CardContent className="space-y-2">
+        <div className="flex items-start gap-2">
+          <div className={cn(
+            'w-7 h-7 rounded-md flex items-center justify-center shrink-0 mt-0.5 transition-colors',
+            skill.eligibility.eligible
+              ? 'bg-primary/10 text-primary group-hover:bg-primary/15'
+              : 'bg-muted text-muted-foreground'
+          )}>
+            <Sparkles className="w-3.5 h-3.5" />
           </div>
-          {skill.userInvocable && (
-            <span className="text-[10px] text-muted-foreground font-mono">/{skill.name}</span>
-          )}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-semibold truncate">{skill.name}</span>
+              <div className={cn(
+                'w-1.5 h-1.5 rounded-full shrink-0',
+                skill.eligibility.eligible ? 'bg-success' : 'bg-destructive/60'
+              )} />
+            </div>
+            {skill.userInvocable && (
+              <span className="text-[10px] text-muted-foreground font-mono">/{skill.name}</span>
+            )}
+          </div>
         </div>
-      </div>
 
-      {/* description */}
-      <p className="text-[11px] text-muted-foreground leading-relaxed line-clamp-2">{skill.description}</p>
+        <p className="text-[11px] text-muted-foreground leading-relaxed line-clamp-2">{skill.description}</p>
 
-      {/* bottom row: badges + actions */}
-      <div className="flex items-center gap-1 flex-wrap">
-        {hasReqs && (
-          <>
-            {skill.metadata.requires?.bins?.map(b => (
-              <span key={b} className="text-[9px] font-mono bg-secondary rounded px-1.5 py-0.5 text-muted-foreground">{b}</span>
-            ))}
-            {skill.metadata.requires?.env?.map(e => (
-              <span key={e} className="text-[9px] font-mono bg-secondary rounded px-1.5 py-0.5 text-muted-foreground">{e}</span>
-            ))}
-          </>
-        )}
-        <span className="flex-1" />
-        <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-0.5" onClick={e => e.stopPropagation()}>
-          <button
-            onClick={onEdit}
-            className="p-1 rounded hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
-            title={skill.builtIn ? 'view' : 'edit'}
-          >
-            <Pencil className="w-3 h-3" />
-          </button>
-          {!skill.builtIn && (
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <button
-                  className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
-                  title="delete"
-                >
-                  <Trash2 className="w-3 h-3" />
-                </button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle className="text-sm">delete "{skill.name}"?</AlertDialogTitle>
-                  <AlertDialogDescription className="text-xs">removes from ~/.dorabot/skills/. cannot be undone.</AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel className="h-7 text-xs">cancel</AlertDialogCancel>
-                  <AlertDialogAction className="h-7 text-xs" onClick={onDelete}>delete</AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+        <div className="flex items-center gap-1 flex-wrap">
+          {fileCount > 0 && (
+            <span className="text-[9px] font-mono bg-secondary rounded px-1.5 py-0.5 text-muted-foreground flex items-center gap-0.5">
+              <FolderTree className="w-2.5 h-2.5" />{fileCount} files
+            </span>
           )}
+          {skill.metadata.requires?.bins?.map(b => (
+            <span key={b} className="text-[9px] font-mono bg-secondary rounded px-1.5 py-0.5 text-muted-foreground">{b}</span>
+          ))}
+          {skill.metadata.requires?.env?.map(e => (
+            <span key={e} className="text-[9px] font-mono bg-secondary rounded px-1.5 py-0.5 text-muted-foreground">{e}</span>
+          ))}
+          <span className="flex-1" />
+          <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-0.5" onClick={e => e.stopPropagation()}>
+            <button
+              onClick={onEdit}
+              className="p-1 rounded hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+              title={skill.builtIn ? 'view' : 'edit'}
+            >
+              <Pencil className="w-3 h-3" />
+            </button>
+            {!skill.builtIn && (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <button className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors" title="delete">
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle className="text-sm">delete "{skill.name}"?</AlertDialogTitle>
+                    <AlertDialogDescription className="text-xs">removes from ~/.dorabot/skills/. cannot be undone.</AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel className="h-7 text-xs">cancel</AlertDialogCancel>
+                    <AlertDialogAction className="h-7 text-xs" onClick={onDelete}>delete</AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
+          </div>
         </div>
-      </div>
-    </button>
+      </CardContent>
+    </Card>
   );
 }
+
+// ── registry (discover) card ─────────────────────────────────────
+
+function RegistryCard({ skill, installed, installing, onClick, onInstall }: {
+  skill: RegistrySkill;
+  installed: boolean;
+  installing: boolean;
+  onClick: () => void;
+  onInstall: () => void;
+}) {
+  return (
+    <Card
+      className="group cursor-pointer transition-all hover:border-primary/30 hover:shadow-sm py-3"
+      onClick={onClick}
+    >
+      <CardContent className="space-y-2.5">
+        <div className="flex items-start gap-2.5">
+          <img
+            src={skill.avatar?.startsWith('https://') ? skill.avatar : ''}
+            alt=""
+            className="w-8 h-8 rounded-md shrink-0 bg-muted"
+            loading="lazy"
+          />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-semibold truncate">{skill.name}</span>
+              {installed && (
+                <Badge variant="secondary" className="text-[8px] h-3.5 px-1">installed</Badge>
+              )}
+            </div>
+            <span className="text-[10px] text-muted-foreground font-mono">{skill.repo}</span>
+          </div>
+        </div>
+
+        <p className="text-[11px] text-muted-foreground leading-relaxed line-clamp-2">{skill.description}</p>
+
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] text-muted-foreground flex items-center gap-0.5">
+              <Star className="w-3 h-3" />{formatCount(skill.stars)}
+            </span>
+            <span className="text-[10px] text-muted-foreground flex items-center gap-0.5">
+              <Download className="w-3 h-3" />{formatCount(skill.installs)}
+            </span>
+            <Badge variant="outline" className="text-[8px] h-3.5 px-1.5 font-normal">{skill.category}</Badge>
+          </div>
+          <div onClick={e => e.stopPropagation()}>
+            {installed ? (
+              <Badge variant="secondary" className="text-[10px] h-5 px-2">
+                <CheckCircle2 className="w-3 h-3 mr-0.5" />installed
+              </Badge>
+            ) : (
+              <Button
+                variant="default"
+                size="sm"
+                className="h-6 text-[10px] px-2.5"
+                onClick={onInstall}
+                disabled={installing}
+              >
+                {installing ? (
+                  <><Loader2 className="w-3 h-3 mr-1 animate-spin" />installing...</>
+                ) : (
+                  <><Download className="w-3 h-3 mr-1" />install</>
+                )}
+              </Button>
+            )}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── installed detail view ────────────────────────────────────────
+
+function InstalledDetailView({ skill, detailContent, gateway, onBack, onEdit, onDelete }: {
+  skill: SkillInfo;
+  detailContent: string;
+  gateway: ReturnType<typeof useGateway>;
+  onBack: () => void;
+  onEdit: () => void;
+  onDelete: (name: string) => void;
+}) {
+  const hasReqs = skill.metadata.requires?.bins?.length || skill.metadata.requires?.env?.length;
+  const hasFiles = skill.files && skill.files.length > 0;
+
+  return (
+    <div className="flex flex-col h-full min-h-0">
+      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border shrink-0">
+        <Button variant="ghost" size="sm" className="h-7 text-xs px-2" onClick={onBack}>
+          <ArrowLeft className="w-3.5 h-3.5 mr-1" />skills
+        </Button>
+        <div className="ml-auto flex items-center gap-1.5">
+          {!skill.builtIn && (
+            <>
+              <Button variant="outline" size="sm" className="h-7 text-xs px-3" onClick={onEdit}>
+                <Pencil className="w-3 h-3 mr-1.5" />edit
+              </Button>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="ghost" size="sm" className="h-7 text-xs px-2 text-destructive hover:text-destructive">
+                    <Trash2 className="w-3 h-3" />
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle className="text-sm">delete "{skill.name}"?</AlertDialogTitle>
+                    <AlertDialogDescription className="text-xs">removes from ~/.dorabot/skills/. cannot be undone.</AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel className="h-7 text-xs">cancel</AlertDialogCancel>
+                    <AlertDialogAction className="h-7 text-xs" onClick={() => onDelete(skill.name)}>delete</AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </>
+          )}
+          {skill.builtIn && (
+            <Button variant="outline" size="sm" className="h-7 text-xs px-3" onClick={onEdit}>
+              <Eye className="w-3 h-3 mr-1.5" />view source
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <ScrollArea className="flex-1 min-h-0">
+        <div className="p-5 max-w-2xl space-y-5">
+          {/* header */}
+          <div>
+            <div className="flex items-center gap-2.5 mb-2">
+              <div className={cn(
+                'w-9 h-9 rounded-lg flex items-center justify-center shrink-0',
+                skill.eligibility.eligible ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
+              )}>
+                <Sparkles className="w-4.5 h-4.5" />
+              </div>
+              <div>
+                <h2 className="text-base font-semibold leading-tight">{skill.name}</h2>
+                {skill.userInvocable && (
+                  <span className="text-[11px] text-muted-foreground font-mono">/{skill.name}</span>
+                )}
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground leading-relaxed mt-2">{skill.description}</p>
+          </div>
+
+          {/* meta grid */}
+          <div className="grid grid-cols-2 gap-3">
+            <MetaItem
+              icon={skill.eligibility.eligible ? CheckCircle2 : XCircle}
+              label="status"
+              value={skill.eligibility.eligible ? 'ready' : 'unavailable'}
+              className={skill.eligibility.eligible ? 'text-success' : 'text-destructive'}
+            />
+            <MetaItem
+              icon={skill.builtIn ? Package : User}
+              label="source"
+              value={skill.builtIn ? 'built-in' : 'custom'}
+            />
+            <MetaItem
+              icon={Slash}
+              label="invocable"
+              value={skill.userInvocable ? 'yes' : 'no'}
+            />
+            <MetaItem
+              icon={FolderTree}
+              label="files"
+              value={`${(skill.files?.length || 0) + 1}`}
+              mono
+            />
+          </div>
+
+          {/* eligibility issues */}
+          {!skill.eligibility.eligible && skill.eligibility.reasons.length > 0 && (
+            <div className="bg-destructive/5 border border-destructive/20 rounded-lg p-3 space-y-1">
+              <span className="text-[11px] font-medium text-destructive">missing requirements</span>
+              {skill.eligibility.reasons.map((r, i) => (
+                <div key={i} className="text-[11px] text-destructive/80">{r}</div>
+              ))}
+            </div>
+          )}
+
+          {/* requirements */}
+          {hasReqs && (
+            <div className="space-y-2">
+              <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">requirements</span>
+              <div className="flex flex-wrap gap-1.5">
+                {skill.metadata.requires?.bins?.map(b => (
+                  <span key={b} className="inline-flex items-center gap-1 text-[11px] font-mono bg-secondary rounded-md px-2 py-1 border border-border">
+                    <Terminal className="w-3 h-3 text-muted-foreground" />{b}
+                  </span>
+                ))}
+                {skill.metadata.requires?.env?.map(e => (
+                  <span key={e} className="inline-flex items-center gap-1 text-[11px] font-mono bg-secondary rounded-md px-2 py-1 border border-border">
+                    <KeyRound className="w-3 h-3 text-muted-foreground" />{e}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* file tree */}
+          {hasFiles && (
+            <FileTreeView skill={skill} gateway={gateway} />
+          )}
+
+          {/* content preview */}
+          {detailContent && (
+            <div className="space-y-2">
+              <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">SKILL.md</span>
+              <pre className="text-[11px] font-mono leading-relaxed bg-secondary/50 rounded-lg p-3 border border-border overflow-x-auto whitespace-pre-wrap break-words max-h-[400px] overflow-y-auto">
+                {detailContent}
+              </pre>
+            </div>
+          )}
+        </div>
+      </ScrollArea>
+    </div>
+  );
+}
+
+// ── registry detail view ─────────────────────────────────────────
+
+function RegistryDetailView({ skill, installed, installing, onBack, onInstall }: {
+  skill: RegistrySkill;
+  installed: boolean;
+  installing: boolean;
+  onBack: () => void;
+  onInstall: () => void;
+}) {
+  return (
+    <div className="flex flex-col h-full min-h-0">
+      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border shrink-0">
+        <Button variant="ghost" size="sm" className="h-7 text-xs px-2" onClick={onBack}>
+          <ArrowLeft className="w-3.5 h-3.5 mr-1" />discover
+        </Button>
+      </div>
+
+      <ScrollArea className="flex-1 min-h-0">
+        <div className="p-5 max-w-2xl space-y-5">
+          {/* header */}
+          <div className="flex items-start gap-3">
+            <img
+              src={skill.avatar?.startsWith('https://') ? skill.avatar : ''}
+              alt=""
+              className="w-12 h-12 rounded-lg shrink-0 bg-muted"
+              loading="lazy"
+            />
+            <div className="flex-1 min-w-0">
+              <h2 className="text-base font-semibold leading-tight">{skill.name}</h2>
+              <a
+                href={`https://github.com/${skill.repo}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[11px] text-muted-foreground font-mono hover:text-foreground inline-flex items-center gap-0.5 mt-0.5"
+                onClick={e => e.stopPropagation()}
+              >
+                {skill.repo}
+                <ExternalLink className="w-2.5 h-2.5" />
+              </a>
+              <p className="text-xs text-muted-foreground leading-relaxed mt-2">{skill.description}</p>
+            </div>
+          </div>
+
+          {/* stats */}
+          <div className="grid grid-cols-3 gap-3">
+            <div className="bg-secondary/30 rounded-lg px-3 py-2 border border-border text-center">
+              <div className="text-[10px] text-muted-foreground">stars</div>
+              <div className="text-sm font-semibold flex items-center justify-center gap-1">
+                <Star className="w-3.5 h-3.5 text-yellow-500" />{formatCount(skill.stars)}
+              </div>
+            </div>
+            <div className="bg-secondary/30 rounded-lg px-3 py-2 border border-border text-center">
+              <div className="text-[10px] text-muted-foreground">installs</div>
+              <div className="text-sm font-semibold flex items-center justify-center gap-1">
+                <Download className="w-3.5 h-3.5 text-primary" />{formatCount(skill.installs)}
+              </div>
+            </div>
+            <div className="bg-secondary/30 rounded-lg px-3 py-2 border border-border text-center">
+              <div className="text-[10px] text-muted-foreground">category</div>
+              <div className="text-sm font-semibold">{skill.category}</div>
+            </div>
+          </div>
+
+          {/* install action */}
+          <div className="flex gap-2">
+            {installed ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <CheckCircle2 className="w-4 h-4 text-success" />
+                already installed
+              </div>
+            ) : (
+              <Button className="h-9 text-xs px-4" onClick={onInstall} disabled={installing}>
+                {installing ? (
+                  <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />installing from GitHub...</>
+                ) : (
+                  <><Download className="w-3.5 h-3.5 mr-1.5" />install to ~/.dorabot/skills/</>
+                )}
+              </Button>
+            )}
+          </div>
+
+          <Separator />
+
+          {/* source info */}
+          <div className="space-y-2">
+            <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">source</span>
+            <div className="bg-secondary/50 rounded-lg p-3 border border-border space-y-1.5">
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-muted-foreground w-16 shrink-0">repo</span>
+                <span className="font-mono text-[11px]">{skill.repo}</span>
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-muted-foreground w-16 shrink-0">path</span>
+                <span className="font-mono text-[11px]">{skill.skillPath}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </ScrollArea>
+    </div>
+  );
+}
+
+// ── file tree component ──────────────────────────────────────────
+
+function FileTreeView({ skill, gateway }: {
+  skill: SkillInfo;
+  gateway: ReturnType<typeof useGateway>;
+}) {
+  const [expandedFile, setExpandedFile] = useState<string | null>(null);
+  const [fileCache, setFileCache] = useState<Record<string, { content: string; loading: boolean }>>({});
+
+  const tree = useMemo(() => buildTree(skill.files || []), [skill.files]);
+
+  const loadFile = async (filePath: string) => {
+    if (expandedFile === filePath) {
+      setExpandedFile(null);
+      return;
+    }
+    setExpandedFile(filePath);
+    // skip fetch if already cached
+    if (fileCache[filePath] && !fileCache[filePath].loading) return;
+    setFileCache(prev => ({ ...prev, [filePath]: { content: '', loading: true } }));
+    try {
+      const result = await gateway.rpc('skills.readFile', { name: skill.name, filePath }) as { content: string };
+      setFileCache(prev => ({ ...prev, [filePath]: { content: result.content, loading: false } }));
+    } catch {
+      setFileCache(prev => ({ ...prev, [filePath]: { content: '(failed to load)', loading: false } }));
+    }
+  };
+
+  const currentFile = expandedFile ? fileCache[expandedFile] : null;
+
+  return (
+    <div className="space-y-2">
+      <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">files</span>
+      <div className="border border-border rounded-lg overflow-hidden">
+        <TreeNode node={tree} depth={0} expandedFile={expandedFile} fileContent={currentFile?.content || ''} loadingFile={currentFile?.loading || false} onClickFile={loadFile} />
+      </div>
+    </div>
+  );
+}
+
+type TreeNodeData = {
+  name: string;
+  isDir: boolean;
+  path: string;
+  size?: number;
+  children: TreeNodeData[];
+};
+
+function buildTree(files: SkillFile[]): TreeNodeData {
+  const root: TreeNodeData = { name: '', isDir: true, path: '', children: [] };
+
+  for (const file of files) {
+    const parts = file.relativePath.split('/');
+    let current = root;
+    for (let i = 0; i < parts.length; i++) {
+      const name = parts[i];
+      const isLast = i === parts.length - 1;
+      const path = parts.slice(0, i + 1).join('/');
+
+      if (isLast) {
+        current.children.push({ name, isDir: false, path, size: file.size, children: [] });
+      } else {
+        let dir = current.children.find(c => c.name === name && c.isDir);
+        if (!dir) {
+          dir = { name, isDir: true, path, children: [] };
+          current.children.push(dir);
+        }
+        current = dir;
+      }
+    }
+  }
+
+  // sort: dirs first, then alphabetical
+  const sortChildren = (node: TreeNodeData) => {
+    node.children.sort((a, b) => {
+      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    node.children.forEach(sortChildren);
+  };
+  sortChildren(root);
+
+  return root;
+}
+
+function TreeNode({ node, depth, expandedFile, fileContent, loadingFile, onClickFile }: {
+  node: TreeNodeData;
+  depth: number;
+  expandedFile: string | null;
+  fileContent: string;
+  loadingFile: boolean;
+  onClickFile: (path: string) => void;
+}) {
+  const [open, setOpen] = useState(depth < 2);
+  const children = node.children;
+
+  if (depth === 0) {
+    return (
+      <div className="divide-y divide-border">
+        {children.map(child => (
+          <TreeNode key={child.path} node={child} depth={1} expandedFile={expandedFile} fileContent={fileContent} loadingFile={loadingFile} onClickFile={onClickFile} />
+        ))}
+      </div>
+    );
+  }
+
+  if (node.isDir) {
+    return (
+      <Collapsible open={open} onOpenChange={setOpen}>
+        <CollapsibleTrigger className="flex items-center gap-1.5 w-full px-3 py-1.5 hover:bg-secondary/50 transition-colors text-left" style={{ paddingLeft: `${depth * 16 + 12}px` }}>
+          <ChevronRight className={cn('w-3 h-3 text-muted-foreground transition-transform shrink-0', open && 'rotate-90')} />
+          <FolderOpen className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+          <span className="text-[11px] font-medium truncate">{node.name}</span>
+          <span className="text-[9px] text-muted-foreground ml-auto">{node.children.length}</span>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          {children.map(child => (
+            <TreeNode key={child.path} node={child} depth={depth + 1} expandedFile={expandedFile} fileContent={fileContent} loadingFile={loadingFile} onClickFile={onClickFile} />
+          ))}
+        </CollapsibleContent>
+      </Collapsible>
+    );
+  }
+
+  const isExpanded = expandedFile === node.path;
+
+  return (
+    <div>
+      <button
+        className={cn(
+          'flex items-center gap-1.5 w-full px-3 py-1.5 hover:bg-secondary/50 transition-colors text-left',
+          isExpanded && 'bg-secondary/50'
+        )}
+        style={{ paddingLeft: `${depth * 16 + 12}px` }}
+        onClick={() => onClickFile(node.path)}
+      >
+        <File className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+        <span className="text-[11px] font-mono truncate">{node.name}</span>
+        {node.size !== undefined && (
+          <span className="text-[9px] text-muted-foreground ml-auto shrink-0">{formatBytes(node.size)}</span>
+        )}
+      </button>
+      {isExpanded && (
+        <div className="border-t border-border bg-secondary/30">
+          {loadingFile ? (
+            <div className="p-3 flex items-center gap-2 text-[11px] text-muted-foreground">
+              <Loader2 className="w-3 h-3 animate-spin" />loading...
+            </div>
+          ) : (
+            <pre className="text-[10px] font-mono leading-relaxed p-3 overflow-x-auto whitespace-pre-wrap break-words max-h-[300px] overflow-y-auto">
+              {fileContent}
+            </pre>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── shared components ────────────────────────────────────────────
 
 function MetaItem({ icon: Icon, label, value, className, mono }: {
   icon: React.ComponentType<{ className?: string }>;
@@ -729,4 +1249,18 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
       <div className="flex-1 h-px bg-border" />
     </div>
   );
+}
+
+// ── utils ────────────────────────────────────────────────────────
+
+function formatCount(n: number): string {
+  if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}K`;
+  return String(n);
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 }

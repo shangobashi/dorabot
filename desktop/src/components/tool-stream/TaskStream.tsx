@@ -1,8 +1,9 @@
 import { motion, AnimatePresence } from "motion/react"
-import { Bot, Cpu, Zap, Terminal, FileText, Search, Globe, Brain, Wrench } from "lucide-react"
+import { Bot, Cpu, Zap, Terminal, FileText, Search, Globe, Brain, Wrench, GitBranch, Coins } from "lucide-react"
 import type { ToolUIProps } from "../tool-ui"
 import { safeParse } from "../../lib/safe-parse"
 import { ElapsedTime } from "./ElapsedTime"
+import type { TaskProgress, ActiveWorktree } from "../../hooks/useGateway"
 
 type SubItem = {
   type: string
@@ -18,6 +19,68 @@ type SubItem = {
 const SUB_TOOL_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   Bash: Terminal, Read: FileText, Write: FileText, Edit: FileText,
   Glob: Search, Grep: Search, WebFetch: Globe, WebSearch: Globe,
+}
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
+  return String(n)
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`
+  const s = ms / 1000
+  return s < 60 ? `${s.toFixed(1)}s` : `${Math.floor(s / 60)}m${Math.round(s % 60)}s`
+}
+
+function TaskMetricsBar({ progress }: { progress: TaskProgress }) {
+  const hasData = progress.toolCount > 0 || progress.inputTokens > 0 || progress.durationMs > 0
+  if (!hasData && !progress.summary) return null
+
+  return (
+    <div className="border-t border-border/20 px-3 py-1.5 space-y-1">
+      {/* Metrics row */}
+      {hasData && (
+        <div className="flex items-center gap-3 text-[9px] text-muted-foreground/60 tabular-nums">
+          {progress.toolCount > 0 && (
+            <span className="flex items-center gap-0.5">
+              <Wrench className="w-2.5 h-2.5" />
+              {progress.toolCount} tools
+            </span>
+          )}
+          {progress.inputTokens > 0 && (
+            <span className="flex items-center gap-0.5">
+              <Coins className="w-2.5 h-2.5" />
+              {formatTokens(progress.inputTokens + progress.outputTokens)}
+            </span>
+          )}
+          {progress.durationMs > 0 && (
+            <span>{formatDuration(progress.durationMs)}</span>
+          )}
+        </div>
+      )}
+      {/* AI-generated summary */}
+      {progress.summary && (
+        <motion.div
+          className="text-[10px] text-muted-foreground/70 italic leading-tight"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          key={progress.summary}
+        >
+          {progress.summary}
+        </motion.div>
+      )}
+    </div>
+  )
+}
+
+function WorktreeBadge({ worktree }: { worktree: ActiveWorktree }) {
+  return (
+    <span className="inline-flex items-center gap-0.5 text-[9px] text-primary/70 bg-primary/8 px-1 py-0.5 rounded border border-primary/15">
+      <GitBranch className="w-2.5 h-2.5" />
+      {worktree.branch}
+    </span>
+  )
 }
 
 function BrainPulse() {
@@ -97,7 +160,7 @@ function SubItemView({ item }: { item: SubItem }) {
   return null
 }
 
-export function TaskStream({ input, output, isError, streaming, subItems }: ToolUIProps) {
+export function TaskStream({ input, output, isError, streaming, subItems, taskProgress, worktree }: ToolUIProps & { taskProgress?: TaskProgress; worktree?: ActiveWorktree }) {
   const parsed = safeParse(input)
   const items = (subItems || []) as SubItem[]
 
@@ -126,6 +189,7 @@ export function TaskStream({ input, output, isError, streaming, subItems }: Tool
             {bg && (
               <span className="text-[9px] text-warning/70 bg-warning/10 px-1 py-0.5 rounded border border-warning/15">bg</span>
             )}
+            {worktree && <WorktreeBadge worktree={worktree} />}
           </div>
           {description && (
             <motion.div
@@ -143,7 +207,7 @@ export function TaskStream({ input, output, isError, streaming, subItems }: Tool
               transition={{ duration: 2, repeat: Infinity }}
             >
               <Zap className="w-2.5 h-2.5" />
-              working...
+              {taskProgress?.summary || 'working...'}
               <ElapsedTime running={true} />
             </motion.div>
           )}
@@ -161,6 +225,9 @@ export function TaskStream({ input, output, isError, streaming, subItems }: Tool
           </motion.span>
         )}
       </div>
+
+      {/* Server-side task metrics */}
+      {taskProgress && <TaskMetricsBar progress={taskProgress} />}
 
       {/* subagent live stream */}
       {hasSubContent && (

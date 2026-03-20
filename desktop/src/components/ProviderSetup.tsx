@@ -324,8 +324,9 @@ function CodexSetup({ gateway, onSuccess, onBack, compact, preferredMethod }: Co
       // Check if codex binary is available
       const check = await gateway.checkProvider('codex');
       if (!check.ready && check.reason?.includes('binary not found')) {
-        setError('Codex CLI not installed. Run: npm i -g @openai/codex');
+        setError('Codex CLI not installed. Run: npm i -g @openai/codex, then try again.');
         setLoading(false);
+        setMode('choose');
         return;
       }
 

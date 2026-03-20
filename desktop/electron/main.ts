@@ -2,10 +2,10 @@ import { app, BrowserWindow, Tray, Menu, nativeImage, session, ipcMain, shell, N
 import { autoUpdater } from 'electron-updater';
 import { is } from '@electron-toolkit/utils';
 import * as path from 'path';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, appendFileSync, mkdirSync } from 'fs';
 import { GatewayManager } from './gateway-manager';
 import { GatewayBridge } from './gateway-bridge';
-import { GATEWAY_LOG_PATH } from './dorabot-paths';
+import { GATEWAY_LOG_PATH, DORABOT_LOGS_DIR } from './dorabot-paths';
 
 function readGatewayLogs(): string {
   try {
@@ -35,72 +35,89 @@ if (!gotSingleInstanceLock) {
 }
 
 // --- Auto-updater setup ---
-autoUpdater.autoDownload = false;
+autoUpdater.autoDownload = true;
 autoUpdater.autoInstallOnAppQuit = true;
+
+const UPDATER_LOG_PATH = path.join(DORABOT_LOGS_DIR, 'updater.log');
+
+function ulog(msg: string): void {
+  const line = `[${new Date().toISOString()}] ${msg}`;
+  console.log(`[updater] ${msg}`);
+  try {
+    mkdirSync(DORABOT_LOGS_DIR, { recursive: true });
+    appendFileSync(UPDATER_LOG_PATH, line + '\n');
+  } catch {}
+}
 
 function sendUpdateStatus(event: string, data?: any): void {
   mainWindow?.webContents.send('update-status', { event, ...data });
 }
 
 function setupAutoUpdater(): void {
+  ulog(`App version: ${app.getVersion()}`);
+
   autoUpdater.on('checking-for-update', () => {
-    console.log('[updater] Checking for updates...');
+    ulog('Checking for updates...');
     sendUpdateStatus('checking');
   });
 
   autoUpdater.on('update-available', (info) => {
-    console.log(`[updater] Update available: ${info.version}`);
+    ulog(`Update available: ${info.version}`);
     sendUpdateStatus('available', { version: info.version, releaseNotes: info.releaseNotes });
   });
 
-  autoUpdater.on('update-not-available', () => {
-    console.log('[updater] No updates available');
+  autoUpdater.on('update-not-available', (info) => {
+    ulog(`Up to date (${info.version})`);
     sendUpdateStatus('not-available');
   });
 
   autoUpdater.on('download-progress', (progress) => {
+    if (Math.round(progress.percent) % 25 === 0) ulog(`Download: ${Math.round(progress.percent)}%`);
     sendUpdateStatus('downloading', { percent: Math.round(progress.percent) });
   });
 
   autoUpdater.on('update-downloaded', (info) => {
-    console.log(`[updater] Update downloaded: ${info.version}`);
+    ulog(`Update downloaded: ${info.version}`);
     sendUpdateStatus('downloaded', { version: info.version });
   });
 
   autoUpdater.on('error', (err) => {
-    console.error('[updater] Error:', err.message);
+    ulog(`Error: ${err.message}\n${err.stack ?? ''}`);
     sendUpdateStatus('error', { message: err.message });
   });
 
   // IPC handlers for renderer
   ipcMain.on('update-check', () => {
+    ulog('Manual check requested');
     autoUpdater.checkForUpdates().catch((err) => {
-      console.error('[updater] Check failed:', err.message);
+      ulog(`Check failed: ${err.message}`);
     });
   });
 
   ipcMain.on('update-download', () => {
+    ulog('Manual download requested');
     autoUpdater.downloadUpdate().catch((err) => {
-      console.error('[updater] Download failed:', err.message);
+      ulog(`Download failed: ${err.message}`);
     });
   });
 
   ipcMain.on('update-install', () => {
+    ulog('Install requested, calling quitAndInstall...');
     isQuitting = true;
     autoUpdater.quitAndInstall();
     // Safety net: if quitAndInstall didn't trigger quit within 5s
     // (e.g. Squirrel deadlock), force restart the app
     setTimeout(() => {
-      console.log('[updater] quitAndInstall did not quit within 5s, forcing restart');
+      ulog('quitAndInstall did not quit within 5s, forcing restart');
       app.relaunch();
       app.exit(0);
     }, 5000);
   });
 
-  // Check for updates 10s after launch, then every 4 hours
+  // Check for updates 10s after launch, then every 30 minutes
   if (!is.dev) {
-    setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 10_000);
-    updateCheckInterval = setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 4 * 60 * 60 * 1000);
+    setTimeout(() => autoUpdater.checkForUpdates().catch((e) => ulog(`Initial check failed: ${e.message}`)), 10_000);
+    updateCheckInterval = setInterval(() => autoUpdater.checkForUpdates().catch((e) => ulog(`Periodic check failed: ${e.message}`)), 30 * 60 * 1000);
   }
 }
 

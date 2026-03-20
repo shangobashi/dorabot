@@ -311,6 +311,57 @@ export function SettingsView({ gateway }: Props) {
                     disabled={disabled}
                   />
                 </div>
+
+                {/* Extended Context (1M) */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-xs font-medium">Extended Context (1M)</div>
+                    <div className="text-[10px] text-muted-foreground">Enable 1M token context window (Opus/Sonnet 4.6)</div>
+                  </div>
+                  <Switch
+                    checked={cfg?.betas?.includes('context-1m-2025-08-07') ?? false}
+                    onCheckedChange={(checked: boolean) => {
+                      const current = cfg?.betas || [];
+                      const next = checked
+                        ? [...current.filter((b: string) => b !== 'context-1m-2025-08-07'), 'context-1m-2025-08-07']
+                        : current.filter((b: string) => b !== 'context-1m-2025-08-07');
+                      set('betas', next.length > 0 ? next : null);
+                    }}
+                    disabled={disabled}
+                  />
+                </div>
+
+                {/* Progress Summaries */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-xs font-medium">Subagent Summaries</div>
+                    <div className="text-[10px] text-muted-foreground">AI-generated progress updates for subagent tasks</div>
+                  </div>
+                  <Switch
+                    checked={cfg?.agentProgressSummaries ?? true}
+                    onCheckedChange={(checked: boolean) => set('agentProgressSummaries', checked)}
+                    disabled={disabled}
+                  />
+                </div>
+
+                {/* Settings Sources */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-xs font-medium">Load Project Instructions</div>
+                    <div className="text-[10px] text-muted-foreground">Load CLAUDE.md and project settings into sessions</div>
+                  </div>
+                  <Switch
+                    checked={cfg?.settingSources?.includes('project') ?? false}
+                    onCheckedChange={(checked: boolean) => {
+                      const current = cfg?.settingSources || [];
+                      const next = checked
+                        ? [...current.filter((s: string) => s !== 'project'), 'project']
+                        : current.filter((s: string) => s !== 'project');
+                      set('settingSources', next.length > 0 ? next : null);
+                    }}
+                    disabled={disabled}
+                  />
+                </div>
               </div>
             </CardContent>
           </Card>

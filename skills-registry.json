@@ -1,0 +1,272 @@
+[
+  {
+    "name": "agent-slack",
+    "description": "Slack automation CLI for AI agents. Read/send messages, browse channels, search, download attachments.",
+    "repo": "stablyai/agent-slack",
+    "skillPath": "skills/agent-slack",
+    "stars": 344,
+    "installs": 715,
+    "category": "tools",
+    "avatar": "https://github.com/stablyai.png"
+  },
+  {
+    "name": "react-best-practices",
+    "description": "Optimal React patterns, conventions, and architecture guidance for modern applications.",
+    "repo": "vercel-labs/agent-skills",
+    "skillPath": "skills/react-best-practices",
+    "stars": 6500,
+    "installs": 230900,
+    "category": "development",
+    "avatar": "https://github.com/vercel-labs.png"
+  },
+  {
+    "name": "web-design-guidelines",
+    "description": "Standards and recommendations for creating beautiful, accessible web interfaces.",
+    "repo": "vercel-labs/agent-skills",
+    "skillPath": "skills/web-design-guidelines",
+    "stars": 6500,
+    "installs": 184100,
+    "category": "development",
+    "avatar": "https://github.com/vercel-labs.png"
+  },
+  {
+    "name": "frontend-design",
+    "description": "UI/UX design principles and implementation for modern frontends.",
+    "repo": "anthropics/skills",
+    "skillPath": "skills/frontend-design",
+    "stars": 98500,
+    "installs": 180700,
+    "category": "development",
+    "avatar": "https://github.com/anthropics.png"
+  },
+  {
+    "name": "remotion",
+    "description": "Create videos programmatically with React. Best practices for Remotion framework.",
+    "repo": "remotion-dev/skills",
+    "skillPath": "skills/remotion",
+    "stars": 2100,
+    "installs": 160300,
+    "category": "content-media",
+    "avatar": "https://github.com/remotion-dev.png"
+  },
+  {
+    "name": "shadcn",
+    "description": "Build UIs with shadcn/ui components. Patterns, theming, and best practices.",
+    "repo": "shadcn-ui/ui",
+    "skillPath": "skills/shadcn",
+    "stars": 109790,
+    "installs": 89000,
+    "category": "development",
+    "avatar": "https://github.com/shadcn-ui.png"
+  },
+  {
+    "name": "skill-creator",
+    "description": "Create and publish your own agent skills. Templates, structure, and best practices.",
+    "repo": "anthropics/skills",
+    "skillPath": "skills/skill-creator",
+    "stars": 98500,
+    "installs": 95500,
+    "category": "tools",
+    "avatar": "https://github.com/anthropics.png"
+  },
+  {
+    "name": "claude-api",
+    "description": "Build apps with the Claude API and Anthropic SDKs. Authentication, streaming, tool use.",
+    "repo": "anthropics/skills",
+    "skillPath": "skills/claude-api",
+    "stars": 98500,
+    "installs": 75000,
+    "category": "development",
+    "avatar": "https://github.com/anthropics.png"
+  },
+  {
+    "name": "deploy-to-vercel",
+    "description": "Deploy applications to Vercel. CLI setup, project configuration, environment variables.",
+    "repo": "vercel-labs/agent-skills",
+    "skillPath": "skills/deploy-to-vercel",
+    "stars": 6500,
+    "installs": 52000,
+    "category": "devops",
+    "avatar": "https://github.com/vercel-labs.png"
+  },
+  {
+    "name": "pdf",
+    "description": "Generate and manipulate PDF documents. Layouts, styling, tables, and charts.",
+    "repo": "anthropics/skills",
+    "skillPath": "skills/pdf",
+    "stars": 98500,
+    "installs": 48000,
+    "category": "tools",
+    "avatar": "https://github.com/anthropics.png"
+  },
+  {
+    "name": "docx",
+    "description": "Create and edit Word documents. Formatting, templates, tables, and images.",
+    "repo": "anthropics/skills",
+    "skillPath": "skills/docx",
+    "stars": 98500,
+    "installs": 45000,
+    "category": "tools",
+    "avatar": "https://github.com/anthropics.png"
+  },
+  {
+    "name": "xlsx",
+    "description": "Create Excel spreadsheets. Formulas, charts, pivot tables, and data formatting.",
+    "repo": "anthropics/skills",
+    "skillPath": "skills/xlsx",
+    "stars": 98500,
+    "installs": 42000,
+    "category": "tools",
+    "avatar": "https://github.com/anthropics.png"
+  },
+  {
+    "name": "pptx",
+    "description": "Create PowerPoint presentations. Slides, layouts, charts, and animations.",
+    "repo": "anthropics/skills",
+    "skillPath": "skills/pptx",
+    "stars": 98500,
+    "installs": 40000,
+    "category": "tools",
+    "avatar": "https://github.com/anthropics.png"
+  },
+  {
+    "name": "mcp-builder",
+    "description": "Build Model Context Protocol servers. TypeScript SDK, tool definitions, and deployment.",
+    "repo": "anthropics/skills",
+    "skillPath": "skills/mcp-builder",
+    "stars": 98500,
+    "installs": 35000,
+    "category": "development",
+    "avatar": "https://github.com/anthropics.png"
+  },
+  {
+    "name": "webapp-testing",
+    "description": "Test web applications with Playwright, Jest, and other frameworks. E2E, unit, and integration tests.",
+    "repo": "anthropics/skills",
+    "skillPath": "skills/webapp-testing",
+    "stars": 98500,
+    "installs": 32000,
+    "category": "testing-security",
+    "avatar": "https://github.com/anthropics.png"
+  },
+  {
+    "name": "composition-patterns",
+    "description": "Advanced React composition patterns. HOCs, render props, compound components, and hooks.",
+    "repo": "vercel-labs/agent-skills",
+    "skillPath": "skills/composition-patterns",
+    "stars": 6500,
+    "installs": 28000,
+    "category": "development",
+    "avatar": "https://github.com/vercel-labs.png"
+  },
+  {
+    "name": "slack-gif-creator",
+    "description": "Create animated GIFs for Slack. Custom reactions, memes, and team celebrations.",
+    "repo": "anthropics/skills",
+    "skillPath": "skills/slack-gif-creator",
+    "stars": 98500,
+    "installs": 13400,
+    "category": "content-media",
+    "avatar": "https://github.com/anthropics.png"
+  },
+  {
+    "name": "react-native-skills",
+    "description": "Build mobile apps with React Native. Navigation, native modules, and platform-specific code.",
+    "repo": "vercel-labs/agent-skills",
+    "skillPath": "skills/react-native-skills",
+    "stars": 6500,
+    "installs": 11000,
+    "category": "development",
+    "avatar": "https://github.com/vercel-labs.png"
+  },
+  {
+    "name": "canvas-design",
+    "description": "Create visual designs with HTML Canvas. Generative art, data visualization, and animations.",
+    "repo": "anthropics/skills",
+    "skillPath": "skills/canvas-design",
+    "stars": 98500,
+    "installs": 10000,
+    "category": "content-media",
+    "avatar": "https://github.com/anthropics.png"
+  },
+  {
+    "name": "web-artifacts-builder",
+    "description": "Build interactive web artifacts. Single-file HTML apps, demos, and prototypes.",
+    "repo": "anthropics/skills",
+    "skillPath": "skills/web-artifacts-builder",
+    "stars": 98500,
+    "installs": 9000,
+    "category": "development",
+    "avatar": "https://github.com/anthropics.png"
+  },
+  {
+    "name": "linear",
+    "description": "Manage issues, projects, and team workflows in Linear. Read, create, and update tickets.",
+    "repo": "vercel-labs/agent-skills",
+    "skillPath": "skills/linear",
+    "stars": 6500,
+    "installs": 7500,
+    "category": "tools",
+    "avatar": "https://github.com/vercel-labs.png"
+  },
+  {
+    "name": "algorithmic-art",
+    "description": "Create algorithmic and generative art with code. Fractals, patterns, and creative coding.",
+    "repo": "anthropics/skills",
+    "skillPath": "skills/algorithmic-art",
+    "stars": 98500,
+    "installs": 6000,
+    "category": "content-media",
+    "avatar": "https://github.com/anthropics.png"
+  },
+  {
+    "name": "1password",
+    "description": "Set up and use 1Password CLI. Install, sign in, read/inject secrets via op.",
+    "repo": "openclaw/openclaw",
+    "skillPath": "skills/1password",
+    "stars": 321700,
+    "installs": 5000,
+    "category": "tools",
+    "avatar": "https://github.com/openclaw.png"
+  },
+  {
+    "name": "brand-guidelines",
+    "description": "Create and maintain brand identity guidelines. Colors, typography, logos, and tone of voice.",
+    "repo": "anthropics/skills",
+    "skillPath": "skills/brand-guidelines",
+    "stars": 98500,
+    "installs": 4500,
+    "category": "content-media",
+    "avatar": "https://github.com/anthropics.png"
+  },
+  {
+    "name": "doc-coauthoring",
+    "description": "Collaborative document writing. Outlines, drafts, revisions, and feedback loops.",
+    "repo": "anthropics/skills",
+    "skillPath": "skills/doc-coauthoring",
+    "stars": 98500,
+    "installs": 4000,
+    "category": "tools",
+    "avatar": "https://github.com/anthropics.png"
+  },
+  {
+    "name": "internal-comms",
+    "description": "Draft internal communications. Memos, announcements, team updates, and status reports.",
+    "repo": "anthropics/skills",
+    "skillPath": "skills/internal-comms",
+    "stars": 98500,
+    "installs": 3500,
+    "category": "tools",
+    "avatar": "https://github.com/anthropics.png"
+  },
+  {
+    "name": "theme-factory",
+    "description": "Generate custom UI themes. Color palettes, dark mode, CSS variables, and design tokens.",
+    "repo": "anthropics/skills",
+    "skillPath": "skills/theme-factory",
+    "stars": 98500,
+    "installs": 3000,
+    "category": "development",
+    "avatar": "https://github.com/anthropics.png"
+  }
+]

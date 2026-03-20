@@ -4,7 +4,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { BentoGrid, BentoGridItem } from '@/components/aceternity/bento-grid';
-import { Shield, Wifi, Radio, Database, FileJson } from 'lucide-react';
+import { Shield, Wifi, Radio, Database, FileJson, GitBranch, Bot } from 'lucide-react';
 
 type Props = {
   gateway: ReturnType<typeof useGateway>;
@@ -142,6 +142,52 @@ export function StatusView({ gateway }: Props) {
                 </CardContent>
               </Card>
             </BentoGridItem>
+
+            {/* Active Tasks & Worktrees */}
+            {(() => {
+              const activeState = gateway.sessionStates[gateway.activeSessionKey];
+              const tasks = activeState ? Object.values(activeState.taskProgress) : [];
+              const worktrees = activeState?.activeWorktrees || [];
+              const hasContent = tasks.length > 0 || worktrees.length > 0;
+              if (!hasContent) return null;
+              return (
+                <BentoGridItem className="col-span-1">
+                  <Card>
+                    <CardContent className="p-3">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Bot className="w-4 h-4 text-primary" />
+                        <span className="text-xs font-semibold">Active Tasks</span>
+                      </div>
+                      <div className="space-y-2">
+                        {tasks.map(t => (
+                          <div key={t.taskId} className="flex items-center gap-2 text-[10px]">
+                            <Badge variant={t.status === 'running' ? 'default' : t.status === 'completed' ? 'outline' : 'destructive'} className="text-[9px] h-4">
+                              {t.status}
+                            </Badge>
+                            <span className="text-muted-foreground tabular-nums">
+                              {t.toolCount} tools · {t.inputTokens > 0 ? `${(t.inputTokens / 1000).toFixed(1)}K tok` : ''}
+                            </span>
+                            {t.summary && <span className="text-foreground/70 truncate flex-1">{t.summary}</span>}
+                          </div>
+                        ))}
+                        {worktrees.length > 0 && (
+                          <div className="border-t border-border/40 pt-1.5 mt-1.5">
+                            <div className="text-[10px] text-muted-foreground mb-1 flex items-center gap-1">
+                              <GitBranch className="w-3 h-3" /> Worktrees
+                            </div>
+                            {worktrees.map(w => (
+                              <div key={w.path} className="text-[10px] font-mono text-foreground/80">
+                                {w.branch} <span className="text-muted-foreground/50">{w.path}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </BentoGridItem>
+              );
+            })()}
 
             {statusData && (
               <BentoGridItem className="@md:col-span-2">

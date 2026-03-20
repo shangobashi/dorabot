@@ -2,7 +2,8 @@ import { useState, useRef, useEffect, useMemo, useCallback, createContext, useCo
 import { DorabotSprite } from '../components/DorabotSprite';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { useGateway, ChatItem, AskUserQuestion, ImageAttachment } from '../hooks/useGateway';
+import type { useGateway, ChatItem, AskUserQuestion, ImageAttachment, PendingElicitation } from '../hooks/useGateway';
+import { ElicitationForm } from '../components/ElicitationForm';
 import { ApprovalList } from '@/components/approval-ui';
 import { ToolUI } from '@/components/tool-ui';
 import { ToolStreamCard, hasStreamCard } from '@/components/tool-stream';
@@ -195,19 +196,22 @@ function ModelSelector({ gateway, disabled }: { gateway: ReturnType<typeof useGa
           ))}
         </SelectContent>
       </Select>
-      {providerName === 'codex' && (
-        <Select value={reasoningEffort || 'off'} onValueChange={handleEffortChange} disabled={disabled}>
-          <SelectTrigger size="sm" className="h-7 gap-1 text-[11px] rounded-lg shadow-none w-auto text-muted-foreground">
-            <Sparkles className="w-3 h-3" />
-            <span>{reasoningEffort || 'auto'}</span>
-          </SelectTrigger>
-          <SelectContent position="popper" align="start" className="min-w-[120px]">
-            <SelectItem value="off" className="text-xs">auto</SelectItem>
-            {EFFORT_LEVELS.map(e => (
-              <SelectItem key={e.value} value={e.value} className="text-xs">{e.label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      {/* Effort selector — shown for both Claude and Codex */}
+      <Select value={reasoningEffort || 'off'} onValueChange={handleEffortChange} disabled={disabled}>
+        <SelectTrigger size="sm" className="h-7 gap-1 text-[11px] rounded-lg shadow-none w-auto text-muted-foreground">
+          <Sparkles className="w-3 h-3" />
+          <span>{reasoningEffort || 'auto'}</span>
+        </SelectTrigger>
+        <SelectContent position="popper" align="start" className="min-w-[120px]">
+          <SelectItem value="off" className="text-xs">auto</SelectItem>
+          {EFFORT_LEVELS.map(e => (
+            <SelectItem key={e.value} value={e.value} className="text-xs">{e.label}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {/* Thinking mode indicator for Claude 4.6 */}
+      {providerName === 'claude' && claudeModel.includes('-4-6') && (
+        <span className="text-[9px] text-muted-foreground/50 px-1">adaptive</span>
       )}
     </div>
   );
@@ -670,6 +674,10 @@ export function ChatView({ gateway, chatItems, agentStatus, pendingQuestion, ses
   const dragStartRef = useRef<{ y: number; height: number } | null>(null);
   const isRunning = agentStatus !== 'idle';
   const isEmpty = chatItems.length === 0;
+
+  // Derive elicitation and worktree state from active session
+  const activeState = sessionKey ? gateway.sessionStates[sessionKey] : undefined;
+  const pendingElicitation = activeState?.pendingElicitation ?? null;
 
   // Seed message history from existing chat items so ArrowUp works after reload
   useEffect(() => {
@@ -1215,6 +1223,20 @@ export function ChatView({ gateway, chatItems, agentStatus, pendingQuestion, ses
           streaming
         />
       ) : null}
+
+      {/* elicitation form (structured questions from agent) */}
+      {pendingElicitation && (
+        <ElicitationForm
+          elicitation={pendingElicitation}
+          onSubmit={(elicitationId, values) => {
+            // Send the elicitation result back via RPC
+            gateway.rpc('chat.answerElicitation', { elicitationId, values, sessionKey }).catch(() => {});
+          }}
+          onDismiss={() => {
+            gateway.rpc('chat.dismissElicitation', { elicitationId: pendingElicitation.elicitationId, sessionKey }).catch(() => {});
+          }}
+        />
+      )}
 
       {/* approvals */}
       {sessionApprovals.length > 0 && (
