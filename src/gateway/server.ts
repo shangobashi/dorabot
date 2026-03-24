@@ -21,6 +21,7 @@ import type { RunHandle } from '../providers/types.js';
 import { startScheduler, loadCalendarItems, migrateCronToCalendar, type SchedulerRunner } from '../calendar/scheduler.js';
 import { checkSkillEligibility, loadAllSkills, findSkillByName } from '../skills/loader.js';
 import { builtInAgents, getAllAgents } from '../agents/definitions.js';
+import { getWorktreeStats, removeWorktree } from '../worktree/manager.js';
 import type { InboundMessage } from '../channels/types.js';
 import { getAllChannelStatuses } from '../channels/index.js';
 import { loginWhatsApp, logoutWhatsApp, isWhatsAppLinked } from '../channels/whatsapp/login.js';
@@ -5212,6 +5213,79 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
               cwd: resolved, encoding: 'utf-8', timeout: 5000,
             });
             return { id, result: { diff: output } };
+          } catch (err) {
+            return { id, error: err instanceof Error ? err.message : String(err) };
+          }
+        }
+
+        case 'git.worktrees': {
+          const repoRoot = params?.path as string;
+          if (!repoRoot) return { id, error: 'path required' };
+          const resolved = resolve(repoRoot);
+          try {
+            const { execFileSync } = await import('node:child_process');
+            const raw = execFileSync('git', ['worktree', 'list', '--porcelain'], {
+              cwd: resolved, encoding: 'utf-8', timeout: 5000,
+            });
+            const worktrees: { path: string; branch: string; head: string; bare: boolean; isMain: boolean;
+              clean: boolean; staged: number; changed: number; untracked: number; ahead: number; behind: number; lastCommit: string;
+            }[] = [];
+            // Parse porcelain output: blocks separated by blank lines
+            const blocks = raw.split('\n\n').filter(Boolean);
+            // First block is the main worktree
+            for (let bi = 0; bi < blocks.length; bi++) {
+              const lines = blocks[bi].split('\n').filter(Boolean);
+              let wtPath = '';
+              let head = '';
+              let branch = '';
+              let bare = false;
+              for (const line of lines) {
+                if (line.startsWith('worktree ')) wtPath = line.slice(9);
+                else if (line.startsWith('HEAD ')) head = line.slice(5);
+                else if (line.startsWith('branch ')) branch = line.slice(7).replace(/^refs\/heads\//, '');
+                else if (line === 'bare') bare = true;
+              }
+              if (!wtPath || bare) continue;
+              // Get stats for each worktree
+              try {
+                const stats = getWorktreeStats(wtPath);
+                worktrees.push({
+                  path: wtPath, branch: branch || stats.branch, head, bare, isMain: bi === 0,
+                  clean: stats.clean, staged: stats.staged, changed: stats.changed,
+                  untracked: stats.untracked, ahead: stats.ahead, behind: stats.behind, lastCommit: stats.lastCommit,
+                });
+              } catch {
+                worktrees.push({
+                  path: wtPath, branch, head, bare, isMain: bi === 0,
+                  clean: true, staged: 0, changed: 0, untracked: 0, ahead: 0, behind: 0, lastCommit: '',
+                });
+              }
+            }
+            return { id, result: { worktrees } };
+          } catch (err) {
+            return { id, error: err instanceof Error ? err.message : String(err) };
+          }
+        }
+
+        case 'git.worktreeRemove': {
+          const repoRoot = params?.path as string;
+          const worktreePath = params?.worktreePath as string;
+          const branch = params?.branch as string | undefined;
+          const removeBranch = params?.removeBranch as boolean | undefined;
+          if (!repoRoot || !worktreePath) return { id, error: 'path and worktreePath required' };
+          const resolvedRepo = resolve(repoRoot);
+          const resolvedWt = resolve(worktreePath);
+          // Path containment: worktree path must be under the repo or the well-known worktrees dir
+          if (!resolvedWt.startsWith(resolvedRepo + '/') && !resolvedWt.includes('/.dorabot/worktrees/')) {
+            return { id, error: 'worktree path must be within repo or ~/.dorabot/worktrees/' };
+          }
+          // Branch name validation: reject anything starting with '-' to prevent git flag injection
+          if (branch && branch.startsWith('-')) {
+            return { id, error: 'invalid branch name' };
+          }
+          try {
+            const result = removeWorktree({ cwd: resolvedRepo, worktreePath: resolvedWt, branch, removeBranch: removeBranch ?? false });
+            return { id, result };
           } catch (err) {
             return { id, error: err instanceof Error ? err.message : String(err) };
           }

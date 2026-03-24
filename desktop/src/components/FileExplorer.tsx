@@ -7,7 +7,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils';
 import {
   Folder, File, ChevronRight, ChevronDown, FolderPlus, FilePlus, Pencil, Trash2,
-  GitBranch, Plus, Minus, FileEdit, RefreshCw, ArrowDownToLine, ArrowUpToLine,
+  GitBranch, FolderGit2, Plus, Minus, FileEdit, RefreshCw, ArrowDownToLine, ArrowUpToLine,
   Check, ChevronUp, Undo2, RotateCcw, X, Search,
 } from 'lucide-react';
 import { toast } from '@/hooks/useToast';
@@ -52,6 +52,20 @@ type GitCommit = {
   subject: string;
   author: string;
   date: string;
+};
+
+type WorktreeInfo = {
+  path: string;
+  branch: string;
+  head: string;
+  isMain: boolean;
+  clean: boolean;
+  staged: number;
+  changed: number;
+  untracked: number;
+  ahead: number;
+  behind: number;
+  lastCommit: string;
 };
 
 type DirState = {
@@ -133,12 +147,13 @@ type GitContextMenuState = {
   section: 'staged' | 'unstaged';
 } | null;
 
-function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh }: {
+function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh, onOpenTerminal }: {
   rpc: Props['rpc'];
   gitState: GitState;
   onFileClick?: (path: string) => void;
   onOpenDiff?: Props['onOpenDiff'];
   onRefresh: () => void;
+  onOpenTerminal?: (cwd: string) => void;
 }) {
   const [commitMsg, setCommitMsg] = useState('');
   const [committing, setCommitting] = useState(false);
@@ -155,24 +170,100 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh }: {
   const [contextMenu, setContextMenu] = useState<GitContextMenuState>(null);
   const branchInputRef = useRef<HTMLInputElement>(null);
 
-  const staged = gitState.files.filter(f => f.staged);
-  const unstaged = gitState.files.filter(f => !f.staged);
-  const hasAhead = gitState.ahead > 0;
-  const hasBehind = gitState.behind > 0;
+  // ── Worktree context switching ──
+  const [worktrees, setWorktrees] = useState<WorktreeInfo[]>([]);
+  const [activeWorktreePath, setActiveWorktreePath] = useState<string | null>(null); // null = main repo
+  const [worktreeGitState, setWorktreeGitState] = useState<GitState | null>(null);
+  const [worktreeLoading, setWorktreeLoading] = useState(false);
+  const [removingWorktree, setRemovingWorktree] = useState<string | null>(null);
+
+  const loadWorktrees = useCallback(async () => {
+    try {
+      const res = await rpc('git.worktrees', { path: gitState.root }) as { worktrees: WorktreeInfo[] };
+      setWorktrees(res.worktrees);
+    } catch { /* ignore */ }
+  }, [rpc, gitState.root]);
+
+  // Load worktrees on mount and periodically. Reset active worktree when repo root changes.
+  const loadWorktreesRef = useRef(loadWorktrees);
+  loadWorktreesRef.current = loadWorktrees;
+  const worktreePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    setActiveWorktreePath(null);
+    setWorktreeGitState(null);
+    loadWorktreesRef.current();
+    worktreePollRef.current = setInterval(() => loadWorktreesRef.current(), 10000);
+    return () => { if (worktreePollRef.current) clearInterval(worktreePollRef.current); };
+  }, [gitState.root]);
+
+  // Clear active worktree if it disappears from the list (removed externally)
+  useEffect(() => {
+    if (activeWorktreePath && worktrees.length > 0 && !worktrees.some(w => w.path === activeWorktreePath)) {
+      setActiveWorktreePath(null);
+      setWorktreeGitState(null);
+    }
+  }, [worktrees, activeWorktreePath]);
+
+  // Fetch git status for the active worktree (use ref for rpc to avoid interval thrashing)
+  const rpcRef = useRef(rpc);
+  rpcRef.current = rpc;
+  useEffect(() => {
+    if (!activeWorktreePath) { setWorktreeGitState(null); setWorktreeLoading(false); return; }
+    let cancelled = false;
+    setWorktreeLoading(true);
+    const fetchStatus = async () => {
+      try {
+        const res = await rpcRef.current('git.status', { path: activeWorktreePath }) as GitState;
+        if (!cancelled) { setWorktreeGitState(res); setWorktreeLoading(false); }
+      } catch { if (!cancelled) { setWorktreeGitState(null); setWorktreeLoading(false); } }
+    };
+    fetchStatus();
+    const interval = setInterval(fetchStatus, 3000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [activeWorktreePath]);
+
+  const handleRemoveWorktree = useCallback(async (wt: WorktreeInfo) => {
+    setRemovingWorktree(wt.path);
+    try {
+      await rpc('git.worktreeRemove', { path: gitState.root, worktreePath: wt.path, branch: wt.branch });
+      toast(`Removed worktree ${wt.branch}`, 'success');
+      if (activeWorktreePath === wt.path) {
+        setActiveWorktreePath(null);
+        setWorktreeGitState(null);
+      }
+      loadWorktrees();
+      onRefresh();
+    } catch (err) {
+      toast(String(err), 'error');
+    } finally {
+      setRemovingWorktree(null);
+    }
+  }, [rpc, gitState.root, activeWorktreePath, loadWorktrees, onRefresh]);
+
+  // Effective state: use worktree's state when one is selected and loaded, otherwise main
+  const effectiveState = activeWorktreePath && worktreeGitState ? worktreeGitState : gitState;
+  const nonMainWorktrees = worktrees.filter(w => !w.isMain);
+  const showWorktreeBar = nonMainWorktrees.length > 0;
+  const isWorktreeContext = !!activeWorktreePath;
+
+  const staged = effectiveState.files.filter(f => f.staged);
+  const unstaged = effectiveState.files.filter(f => !f.staged);
+  const hasAhead = effectiveState.ahead > 0;
+  const hasBehind = effectiveState.behind > 0;
 
   const loadBranches = useCallback(async () => {
     try {
-      const res = await rpc('git.branches', { path: gitState.root }) as { branches: GitBranchInfo[] };
+      const res = await rpc('git.branches', { path: effectiveState.root }) as { branches: GitBranchInfo[] };
       setBranches(res.branches);
     } catch { /* ignore */ }
-  }, [rpc, gitState.root]);
+  }, [rpc, effectiveState.root]);
 
   const loadCommits = useCallback(async () => {
     try {
-      const res = await rpc('git.log', { path: gitState.root, count: 20 }) as { commits: GitCommit[] };
+      const res = await rpc('git.log', { path: effectiveState.root, count: 20 }) as { commits: GitCommit[] };
       setCommits(res.commits);
     } catch { /* ignore */ }
-  }, [rpc, gitState.root]);
+  }, [rpc, effectiveState.root]);
 
   const openBranchPicker = useCallback(() => {
     setShowBranchPicker(true);
@@ -190,7 +281,7 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh }: {
     setActionError('');
     closeBranchPicker();
     try {
-      await rpc('git.checkout', { path: gitState.root, branch, ...(create ? { create: true } : {}) });
+      await rpc('git.checkout', { path: effectiveState.root, branch, ...(create ? { create: true } : {}) });
       onRefresh();
       toast(`Switched to ${branch}`, 'success');
     } catch (err) {
@@ -202,7 +293,7 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh }: {
     setFetching(true);
     setActionError('');
     try {
-      await rpc('git.fetch', { path: gitState.root });
+      await rpc('git.fetch', { path: effectiveState.root });
       onRefresh();
       toast('Fetch complete', 'success');
     } catch (err) {
@@ -216,7 +307,7 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh }: {
     setPulling(true);
     setActionError('');
     try {
-      await rpc('git.pull', { path: gitState.root });
+      await rpc('git.pull', { path: effectiveState.root });
       onRefresh();
       toast('Pull complete', 'success');
     } catch (err) {
@@ -230,7 +321,7 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh }: {
     setActionError('');
     setPushing(true);
     try {
-      await rpc('git.push', { path: gitState.root });
+      await rpc('git.push', { path: effectiveState.root });
       onRefresh();
       toast('Push complete', 'success');
     } catch (err) {
@@ -242,7 +333,7 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh }: {
 
   const handleStage = async (filePath: string) => {
     try {
-      await rpc('git.stageFile', { path: gitState.root, file: filePath });
+      await rpc('git.stageFile', { path: effectiveState.root, file: filePath });
     } catch (err) {
       toast(String(err), 'error');
     }
@@ -251,7 +342,7 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh }: {
 
   const handleUnstage = async (filePath: string) => {
     try {
-      await rpc('git.unstageFile', { path: gitState.root, file: filePath });
+      await rpc('git.unstageFile', { path: effectiveState.root, file: filePath });
     } catch (err) {
       toast(String(err), 'error');
     }
@@ -264,7 +355,7 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh }: {
     if (pendingDiscard !== filePath) { setPendingDiscard(filePath); return; }
     setPendingDiscard(null);
     try {
-      await rpc('git.discardFile', { path: gitState.root, file: filePath });
+      await rpc('git.discardFile', { path: effectiveState.root, file: filePath });
       onRefresh();
     } catch (err) {
       toast(String(err), 'error');
@@ -276,7 +367,7 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh }: {
     setCommitting(true);
     setActionError('');
     try {
-      await rpc('git.commit', { path: gitState.root, message: commitMsg.trim() });
+      await rpc('git.commit', { path: effectiveState.root, message: commitMsg.trim() });
       setCommitMsg('');
       onRefresh();
       toast('Committed', 'success');
@@ -289,18 +380,18 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh }: {
 
   const handleStageAll = async () => {
     try {
-      await rpc('git.stageAll', { path: gitState.root });
+      await rpc('git.stageAll', { path: effectiveState.root });
     } catch {
-      for (const f of unstaged) await rpc('git.stageFile', { path: gitState.root, file: f.path });
+      for (const f of unstaged) await rpc('git.stageFile', { path: effectiveState.root, file: f.path });
     }
     onRefresh();
   };
 
   const handleUnstageAll = async () => {
     try {
-      await rpc('git.unstageAll', { path: gitState.root });
+      await rpc('git.unstageAll', { path: effectiveState.root });
     } catch {
-      for (const f of staged) await rpc('git.unstageFile', { path: gitState.root, file: f.path });
+      for (const f of staged) await rpc('git.unstageFile', { path: effectiveState.root, file: f.path });
     }
     onRefresh();
   };
@@ -308,7 +399,7 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh }: {
   const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'];
 
   const openFileDiff = useCallback(async (f: GitFileStatus) => {
-    const fullPath = gitState.root + '/' + f.path;
+    const fullPath = effectiveState.root + '/' + f.path;
     if (onOpenDiff && (f.status === 'M' || f.status === 'A')) {
       const ext = f.path.split('.').pop()?.toLowerCase() || '';
       const isImage = IMAGE_EXTS.includes(ext);
@@ -317,12 +408,12 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh }: {
         let oldContent: string;
         if (isImage) {
           const currentRes = await rpc('fs.readBinary', { path: fullPath }) as { content: string };
-          const oldRes = await rpc('git.showFile', { path: gitState.root, file: f.path, binary: true }) as { content: string; encoding?: string };
+          const oldRes = await rpc('git.showFile', { path: effectiveState.root, file: f.path, binary: true }) as { content: string; encoding?: string };
           newContent = currentRes.content || '';
           oldContent = oldRes.content || '';
         } else {
           const currentRes = await rpc('fs.read', { path: fullPath }) as { content: string };
-          const oldRes = await rpc('git.showFile', { path: gitState.root, file: f.path }) as { content: string };
+          const oldRes = await rpc('git.showFile', { path: effectiveState.root, file: f.path }) as { content: string };
           newContent = currentRes.content;
           oldContent = oldRes.content || '';
         }
@@ -333,7 +424,7 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh }: {
     } else {
       onFileClick?.(fullPath);
     }
-  }, [gitState.root, rpc, onOpenDiff, onFileClick]);
+  }, [effectiveState.root, rpc, onOpenDiff, onFileClick]);
 
   // Branch picker keyboard nav
   const filteredBranches = branchFilter
@@ -472,13 +563,13 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh }: {
               <ArrowDownToLine className={cn('w-3 h-3', pulling && 'animate-pulse')} />
               {hasBehind && (
                 <span className="absolute -top-0.5 -right-0.5 min-w-[12px] h-3 px-0.5 rounded-full bg-primary text-[8px] font-bold text-primary-foreground flex items-center justify-center">
-                  {gitState.behind}
+                  {effectiveState.behind}
                 </span>
               )}
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom" className="text-[10px]">
-            {hasBehind ? `Pull (${gitState.behind} behind)` : 'Pull'}
+            {hasBehind ? `Pull (${effectiveState.behind} behind)` : 'Pull'}
           </TooltipContent>
         </Tooltip>
         <Tooltip>
@@ -496,16 +587,79 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh }: {
               <ArrowUpToLine className={cn('w-3 h-3', pushing && 'animate-pulse')} />
               {hasAhead && (
                 <span className="absolute -top-0.5 -right-0.5 min-w-[12px] h-3 px-0.5 rounded-full bg-primary text-[8px] font-bold text-primary-foreground flex items-center justify-center">
-                  {gitState.ahead}
+                  {effectiveState.ahead}
                 </span>
               )}
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom" className="text-[10px]">
-            {hasAhead ? `Push (${gitState.ahead} ahead)` : 'Push'}
+            {hasAhead ? `Push (${effectiveState.ahead} ahead)` : 'Push'}
           </TooltipContent>
         </Tooltip>
       </div>
+
+      {/* worktree context bar */}
+      {showWorktreeBar && (
+        <div className="px-1.5 py-1 border-b border-border shrink-0">
+          <div className="flex items-center gap-1 flex-wrap">
+            {/* main repo chip */}
+            <button
+              className={cn(
+                'inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium transition-colors shrink-0',
+                !activeWorktreePath
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-secondary/50 text-muted-foreground hover:bg-secondary hover:text-foreground'
+              )}
+              onClick={() => setActiveWorktreePath(null)}
+            >
+              <GitBranch className="w-2.5 h-2.5" />
+              <span className="truncate max-w-[100px]">{gitState.branch || 'main'}</span>
+            </button>
+            {/* worktree chips */}
+            {nonMainWorktrees.map(wt => {
+              const isActive = activeWorktreePath === wt.path;
+              const dirtyCount = wt.staged + wt.changed + wt.untracked;
+              return (
+                <div key={wt.path} className="relative group shrink-0 flex items-center">
+                  <button
+                    className={cn(
+                      'inline-flex items-center gap-1 pl-2 pr-1.5 py-0.5 rounded-md text-[10px] font-medium transition-colors',
+                      isActive
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-secondary/50 text-muted-foreground hover:bg-secondary hover:text-foreground'
+                    )}
+                    onClick={() => setActiveWorktreePath(isActive ? null : wt.path)}
+                    title={wt.path}
+                  >
+                    <FolderGit2 className="w-2.5 h-2.5" />
+                    <span className="truncate max-w-[100px]">{wt.branch}</span>
+                    {dirtyCount > 0 && (
+                      <span className={cn(
+                        'inline-flex items-center justify-center min-w-[14px] h-3.5 px-1 rounded-full text-[8px] font-bold',
+                        isActive ? 'bg-primary-foreground/20 text-primary-foreground' : 'bg-warning/20 text-warning',
+                      )}>
+                        {dirtyCount}
+                      </span>
+                    )}
+                  </button>
+                  {/* remove button on hover */}
+                  <button
+                    className={cn(
+                      'hidden group-hover:flex items-center justify-center w-4 h-4 rounded-sm ml-0.5 transition-colors',
+                      'text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10',
+                    )}
+                    onClick={(e) => { e.stopPropagation(); handleRemoveWorktree(wt); }}
+                    disabled={removingWorktree === wt.path}
+                    title="Remove worktree"
+                  >
+                    <Trash2 className="w-2.5 h-2.5" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* branch bar */}
       <div className="px-2 py-1 border-b border-border shrink-0">
@@ -514,7 +668,7 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh }: {
           onClick={openBranchPicker}
         >
           <GitBranch className="w-3 h-3 shrink-0 text-primary" />
-          <span className="truncate">{gitState.branch || 'HEAD (detached)'}</span>
+          <span className="truncate">{effectiveState.branch || 'HEAD (detached)'}</span>
           <span className="ml-auto flex items-center gap-1.5 shrink-0">
             <span
               className={cn(
@@ -525,12 +679,12 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh }: {
                     ? 'border-success/40 bg-success/10 text-success'
                     : 'border-border/60 bg-secondary/40 text-muted-foreground',
               )}
-              title={`ahead/behind: ${gitState.ahead}/${gitState.behind}`}
+              title={`ahead/behind: ${effectiveState.ahead}/${effectiveState.behind}`}
             >
-              {hasAhead && <span>↑{gitState.ahead}</span>}
-              {hasBehind && <span>↓{gitState.behind}</span>}
+              {hasAhead && <span>↑{effectiveState.ahead}</span>}
+              {hasBehind && <span>↓{effectiveState.behind}</span>}
               {!hasAhead && !hasBehind && <span>synced</span>}
-              <span className="text-foreground/70">{gitState.ahead}/{gitState.behind}</span>
+              <span className="text-foreground/70">{effectiveState.ahead}/{effectiveState.behind}</span>
             </span>
             <ChevronDown className="w-3 h-3 text-muted-foreground" />
           </span>
@@ -571,6 +725,13 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh }: {
       </div>
 
       <ScrollArea className="flex-1 min-h-0">
+        {/* loading worktree state */}
+        {activeWorktreePath && worktreeLoading && !worktreeGitState && (
+          <div className="px-3 py-4 text-[11px] text-muted-foreground text-center flex items-center justify-center gap-1.5">
+            <RefreshCw className="w-3 h-3 animate-spin" />
+            Loading worktree...
+          </div>
+        )}
         {/* staged changes */}
         {staged.length > 0 && (
           <div className="mb-1">
@@ -784,7 +945,7 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh }: {
           >Open Changes</button>
           <button
             className="flex w-full items-center px-3 py-1.5 text-xs hover:bg-accent hover:text-accent-foreground transition-colors"
-            onClick={() => { onFileClick?.(gitState.root + '/' + contextMenu.file.path); setContextMenu(null); }}
+            onClick={() => { onFileClick?.(effectiveState.root + '/' + contextMenu.file.path); setContextMenu(null); }}
           >Open File</button>
           <div className="bg-border my-1 h-px" />
           {contextMenu.section === 'unstaged' ? (
@@ -815,7 +976,7 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh }: {
           <button
             className="flex w-full items-center px-3 py-1.5 text-xs hover:bg-accent hover:text-accent-foreground transition-colors"
             onClick={() => {
-              rpc('fs.reveal', { path: gitState.root + '/' + contextMenu.file.path }).catch(() => {});
+              rpc('fs.reveal', { path: effectiveState.root + '/' + contextMenu.file.path }).catch(() => {});
               setContextMenu(null);
             }}
           >Reveal in Finder</button>
@@ -1285,7 +1446,7 @@ export function FileExplorer({ rpc, connected, onFileClick, onOpenDiff, onFileCh
         </div>
       );
     }
-    return <GitPanel rpc={rpc} gitState={gitState} onFileClick={onFileClick} onOpenDiff={onOpenDiff} onRefresh={fetchGitStatus} />;
+    return <GitPanel rpc={rpc} gitState={gitState} onFileClick={onFileClick} onOpenDiff={onOpenDiff} onRefresh={fetchGitStatus} onOpenTerminal={onOpenTerminal} />;
   }
 
   // ── Files mode ──────────────────────────────────────────────────
