@@ -111,7 +111,24 @@ All files live in `~/.dorabot/workspace/`. Edit directly or let the agent manage
 
 ## Security
 
-Local-only, no telemetry. Scoped file access (sensitive dirs blocked). Token-authenticated gateway. Configurable tool approval per channel. macOS native sandbox.
+**Runtime:** Local-only, no telemetry. Scoped file access (sensitive dirs blocked). Token-authenticated gateway. Configurable tool approval per channel. macOS native sandbox.
+
+**Supply chain:** All dependencies are pinned to exact versions (no `^` or `~` ranges). New packages must be at least 7 days old before CI will accept them. Every PR and push runs:
+
+- `npm audit` across all workspaces
+- [Snyk](https://snyk.io) deep vulnerability scan (`--all-projects`)
+- Pin check (rejects any caret or tilde ranges)
+- Package age check (rejects packages published less than 7 days ago)
+
+`.npmrc` enforces `save-exact=true` so future installs pin automatically.
+
+To run locally:
+
+```bash
+npm audit                                          # known vulnerabilities
+snyk test --all-projects --strict-out-of-sync=false # deep scan
+node scripts/check-package-age.mjs --min-days=7    # package age
+```
 
 ## FAQ
 
