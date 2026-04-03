@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import type { useGateway } from './useGateway';
 import type { useLayout, GroupId } from './useLayout';
 
-export type TabType = 'chat' | 'channels' | 'goals' | 'automation' | 'extensions' | 'agents' | 'memory' | 'research' | 'settings' | 'file' | 'diff' | 'terminal' | 'task';
+export type TabType = 'chat' | 'channels' | 'goals' | 'automation' | 'extensions' | 'agents' | 'memory' | 'research' | 'settings' | 'file' | 'diff' | 'terminal' | 'task' | 'pr';
 
 export type ChatTab = {
   id: string;
@@ -51,14 +51,23 @@ export type TaskTab = {
   taskId: string;
 };
 
+export type PrTab = {
+  id: string;
+  type: 'pr';
+  label: string;
+  closable: true;
+  repoRoot: string;
+  prNumber: number;
+};
+
 export type ViewTab = {
   id: string;
-  type: Exclude<TabType, 'chat' | 'file' | 'diff' | 'terminal' | 'task'>;
+  type: Exclude<TabType, 'chat' | 'file' | 'diff' | 'terminal' | 'task' | 'pr'>;
   label: string;
   closable: true;
 };
 
-export type Tab = ChatTab | ViewTab | FileTab | DiffTab | TerminalTab | TaskTab;
+export type Tab = ChatTab | ViewTab | FileTab | DiffTab | TerminalTab | TaskTab | PrTab;
 
 export function isChatTab(tab: Tab): tab is ChatTab {
   return tab.type === 'chat';
@@ -78,6 +87,10 @@ export function isTerminalTab(tab: Tab): tab is TerminalTab {
 
 export function isTaskTab(tab: Tab): tab is TaskTab {
   return tab.type === 'task';
+}
+
+export function isPrTab(tab: Tab): tab is PrTab {
+  return tab.type === 'pr';
 }
 
 const TABS_STORAGE_KEY = 'dorabot:tabs';
@@ -543,7 +556,7 @@ export function useTabs(gw: ReturnType<typeof useGateway>, layout: ReturnType<ty
     return tab.id;
   }, [tabs, focusTab, openTab]);
 
-  const openViewTab = useCallback((type: Exclude<TabType, 'chat' | 'file' | 'diff' | 'terminal' | 'task'>, label: string, groupId?: GroupId) => {
+  const openViewTab = useCallback((type: Exclude<TabType, 'chat' | 'file' | 'diff' | 'terminal' | 'task' | 'pr'>, label: string, groupId?: GroupId) => {
     const id = `view:${type}`;
     const existing = tabs.find(t => t.id === id);
     if (existing) {
@@ -666,6 +679,27 @@ export function useTabs(gw: ReturnType<typeof useGateway>, layout: ReturnType<ty
       label: taskTitle,
       closable: true,
       taskId,
+    };
+    setTabs(prev => [...prev, tab]);
+    setActiveTabId(id);
+    layout.addTabToGroup(id, groupId);
+  }, [tabs, focusTab, layout]);
+
+  const openPrTab = useCallback((repoRoot: string, prNumber: number, title: string, groupId?: GroupId) => {
+    const id = `pr:${repoRoot}#${prNumber}`;
+    const existing = tabs.find(t => t.id === id);
+    if (existing) {
+      focusTab(id, groupId);
+      return;
+    }
+
+    const tab: PrTab = {
+      id,
+      type: 'pr',
+      label: `#${prNumber} ${title}`.trim(),
+      closable: true,
+      repoRoot,
+      prNumber,
     };
     setTabs(prev => [...prev, tab]);
     setActiveTabId(id);
@@ -845,6 +879,7 @@ export function useTabs(gw: ReturnType<typeof useGateway>, layout: ReturnType<ty
     openTerminalTab,
     openSessionTab,
     openTaskTab,
+    openPrTab,
     newChatTab,
     unreadBySession,
     dirtyTabs,

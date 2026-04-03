@@ -1,6 +1,6 @@
 import type { EditorGroup } from '../hooks/useLayout';
 import type { Tab } from '../hooks/useTabs';
-import { isChatTab, isFileTab, isDiffTab, isTerminalTab, isTaskTab } from '../hooks/useTabs';
+import { isChatTab, isFileTab, isDiffTab, isTerminalTab, isTaskTab, isPrTab } from '../hooks/useTabs';
 import type { useGateway } from '../hooks/useGateway';
 import type { useTabs } from '../hooks/useTabs';
 import { useDroppable } from '@dnd-kit/core';
@@ -15,6 +15,7 @@ import { AgentsView } from '../views/Agents';
 import { GoalsView } from '../views/Goals';
 import { ResearchView } from '../views/Research';
 import { TaskDetailView } from '../views/projects/TaskDetailView';
+import { PullRequestView } from '../views/PullRequest';
 import { FileViewer } from './FileViewer';
 import { DiffViewer } from './viewers/DiffViewer';
 import { ImageDiffViewer } from './viewers/ImageDiffViewer';
@@ -167,6 +168,18 @@ export function EditorGroupPanel({
               gateway={gateway}
               onViewSession={onViewSession}
               onClose={() => tabState.closeTab(activeTab.id)}
+            />
+          );
+        }
+        return null;
+      case 'pr':
+        if (isPrTab(activeTab)) {
+          return (
+            <PullRequestView
+              key={activeTab.id}
+              repoRoot={activeTab.repoRoot}
+              prNumber={activeTab.prNumber}
+              gateway={gateway}
             />
           );
         }

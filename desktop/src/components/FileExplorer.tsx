@@ -91,6 +91,8 @@ type DiffFile = {
   path: string;
   additions: number;
   deletions: number;
+  status?: string;
+  previousFilename?: string | null;
   binary?: boolean;
 };
 
@@ -112,6 +114,7 @@ type Props = {
   connected: boolean;
   onFileClick?: (filePath: string) => void;
   onOpenDiff?: (opts: { filePath: string; oldContent: string; newContent: string; label?: string; isImage?: boolean }) => void;
+  onOpenPr?: (repoRoot: string, prNumber: number, title: string) => void;
   onFileChange?: (listener: (path: string) => void) => () => void;
   onOpenTerminal?: (cwd: string) => void;
   mode?: 'files' | 'git';
@@ -298,11 +301,12 @@ type GitContextMenuState = {
   section: 'staged' | 'unstaged';
 } | null;
 
-function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh, onOpenTerminal }: {
+function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onOpenPr, onRefresh, onOpenTerminal }: {
   rpc: Props['rpc'];
   gitState: GitState;
   onFileClick?: (path: string) => void;
   onOpenDiff?: Props['onOpenDiff'];
+  onOpenPr?: Props['onOpenPr'];
   onRefresh: () => void;
   onOpenTerminal?: (cwd: string) => void;
 }) {
@@ -1117,36 +1121,47 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh, onOpenTer
               )}
               {prs.map(pr => (
                 <div key={pr.number}>
-                  <button
+                  <div
                     className={cn(
-                      'flex items-start gap-1.5 px-2 py-1.5 w-full text-left transition-colors',
+                      'flex items-start gap-1 px-2 py-1.5 transition-colors',
                       expandedPR === pr.number ? 'bg-secondary/50' : 'hover:bg-secondary/30',
                     )}
-                    onClick={() => {
-                      if (expandedPR === pr.number) { setExpandedPR(null); setPrFiles([]); }
-                      else { setExpandedPR(pr.number); loadPRFiles(pr.number); }
-                    }}
                   >
-                    <Circle className={cn(
-                      'w-2 h-2 mt-1 shrink-0 fill-current',
-                      pr.isDraft ? 'text-muted-foreground' : 'text-success',
-                    )} />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1">
-                        <span className="text-[10px] font-mono text-primary shrink-0">#{pr.number}</span>
-                        <span className="text-[11px] text-foreground truncate">{pr.title}</span>
+                    <button
+                      className="flex min-w-0 flex-1 items-start gap-1.5 text-left"
+                      onClick={() => onOpenPr?.(effectiveState.root, pr.number, pr.title)}
+                    >
+                      <Circle className={cn(
+                        'w-2 h-2 mt-1 shrink-0 fill-current',
+                        pr.isDraft ? 'text-muted-foreground' : 'text-success',
+                      )} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1">
+                          <span className="text-[10px] font-mono text-primary shrink-0">#{pr.number}</span>
+                          <span className="text-[11px] text-foreground truncate">{pr.title}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <span className="text-[9px] font-mono text-muted-foreground truncate">
+                            {pr.headRefName} → {pr.baseRefName}
+                          </span>
+                          <span className="flex items-center gap-1 ml-auto shrink-0">
+                            <span className="text-[9px] text-success">+{pr.additions}</span>
+                            <span className="text-[9px] text-destructive">-{pr.deletions}</span>
+                            <span className="text-[9px] text-muted-foreground">{pr.changedFiles} files</span>
+                          </span>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-1.5 mt-0.5">
-                        <span className="text-[9px] font-mono text-muted-foreground truncate">
-                          {pr.headRefName} → {pr.baseRefName}
-                        </span>
-                        <span className="flex items-center gap-1 ml-auto shrink-0">
-                          <span className="text-[9px] text-success">+{pr.additions}</span>
-                          <span className="text-[9px] text-destructive">-{pr.deletions}</span>
-                          <span className="text-[9px] text-muted-foreground">{pr.changedFiles} files</span>
-                        </span>
-                      </div>
-                    </div>
+                    </button>
+                    <button
+                      className="p-0.5 rounded hover:bg-secondary text-muted-foreground hover:text-foreground shrink-0 mt-0.5"
+                      onClick={() => {
+                        if (expandedPR === pr.number) { setExpandedPR(null); setPrFiles([]); }
+                        else { setExpandedPR(pr.number); loadPRFiles(pr.number); }
+                      }}
+                      title={expandedPR === pr.number ? 'Hide changed files' : 'Show changed files'}
+                    >
+                      {expandedPR === pr.number ? <ChevronDown className="w-2.5 h-2.5" /> : <ChevronRight className="w-2.5 h-2.5" />}
+                    </button>
                     <a
                       href={pr.url}
                       target="_blank"
@@ -1157,7 +1172,7 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh, onOpenTer
                     >
                       <ExternalLink className="w-2.5 h-2.5" />
                     </a>
-                  </button>
+                  </div>
                   {expandedPR === pr.number && (
                     <div className="ml-4 border-l border-primary/20 pl-1.5">
                       {prFilesLoading && (
@@ -1499,7 +1514,7 @@ function GitPanel({ rpc, gitState, onFileClick, onOpenDiff, onRefresh, onOpenTer
 
 // ── Main Export ──────────────────────────────────────────────────────
 
-export function FileExplorer({ rpc, connected, onFileClick, onOpenDiff, onFileChange, onOpenTerminal, mode = 'files', initialViewRoot, initialExpanded, initialSelectedPath, onStateChange }: Props) {
+export function FileExplorer({ rpc, connected, onFileClick, onOpenDiff, onOpenPr, onFileChange, onOpenTerminal, mode = 'files', initialViewRoot, initialExpanded, initialSelectedPath, onStateChange }: Props) {
   const [homeCwd, setHomeCwd] = useState('');
   const [viewRoot, setViewRoot] = useState(initialViewRoot || '');
   const [dirs, setDirs] = useState<Map<string, DirState>>(new Map());
@@ -1956,7 +1971,7 @@ export function FileExplorer({ rpc, connected, onFileClick, onOpenDiff, onFileCh
         </div>
       );
     }
-    return <GitPanel rpc={rpc} gitState={gitState} onFileClick={onFileClick} onOpenDiff={onOpenDiff} onRefresh={fetchGitStatus} onOpenTerminal={onOpenTerminal} />;
+    return <GitPanel rpc={rpc} gitState={gitState} onFileClick={onFileClick} onOpenDiff={onOpenDiff} onOpenPr={onOpenPr} onRefresh={fetchGitStatus} onOpenTerminal={onOpenTerminal} />;
   }
 
   // ── Files mode ──────────────────────────────────────────────────

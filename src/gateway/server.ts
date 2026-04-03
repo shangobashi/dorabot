@@ -246,6 +246,147 @@ function buildToolStatusText(completed: ToolEntry[], current: ToolEntry | null):
   return lines.join('\n');
 }
 
+type GhErrorFlags = {
+  ghMissing?: boolean;
+  ghAuthError?: boolean;
+  notFound?: boolean;
+  networkError?: boolean;
+};
+
+function classifyGhError(err: unknown): { flags: GhErrorFlags; message: string } {
+  const code = (err as NodeJS.ErrnoException | undefined)?.code;
+  const stderr = typeof (err as { stderr?: unknown } | undefined)?.stderr === 'string'
+    ? ((err as { stderr?: string }).stderr || '').trim()
+    : '';
+  const stdout = typeof (err as { stdout?: unknown } | undefined)?.stdout === 'string'
+    ? ((err as { stdout?: string }).stdout || '').trim()
+    : '';
+  const message = stderr || stdout || (err instanceof Error ? err.message : String(err));
+  const lower = message.toLowerCase();
+
+  if (code === 'ENOENT') return { flags: { ghMissing: true }, message };
+  if (
+    lower.includes('auth') ||
+    lower.includes('login') ||
+    lower.includes('token') ||
+    lower.includes('authentication')
+  ) {
+    return { flags: { ghAuthError: true }, message };
+  }
+  if (lower.includes('404') || lower.includes('not found')) {
+    return { flags: { notFound: true }, message };
+  }
+  if (
+    lower.includes('timed out') ||
+    lower.includes('timeout') ||
+    lower.includes('failed to connect') ||
+    lower.includes('connection refused') ||
+    lower.includes('temporary failure') ||
+    lower.includes('no such host') ||
+    lower.includes('network')
+  ) {
+    return { flags: { networkError: true }, message };
+  }
+  return { flags: {}, message };
+}
+
+function getGhRepoNameWithOwner(cwd: string): string {
+  const raw = execFileSync('gh', ['repo', 'view', '--json', 'nameWithOwner'], {
+    cwd,
+    encoding: 'utf-8',
+    timeout: 15000,
+  });
+  const data = JSON.parse(raw || '{}');
+  const nameWithOwner = typeof data?.nameWithOwner === 'string' ? data.nameWithOwner : '';
+  if (!nameWithOwner) throw new Error('Could not determine GitHub repository');
+  return nameWithOwner;
+}
+
+function ghApiJson<T = unknown>(cwd: string, endpoint: string): T {
+  const raw = execFileSync('gh', ['api', endpoint], {
+    cwd,
+    encoding: 'utf-8',
+    timeout: 20000,
+    maxBuffer: 20 * 1024 * 1024,
+  });
+  return JSON.parse(raw || 'null') as T;
+}
+
+function ghApiPaginatedArray<T = unknown>(cwd: string, endpoint: string): T[] {
+  const raw = execFileSync('gh', ['api', '--paginate', '--slurp', endpoint], {
+    cwd,
+    encoding: 'utf-8',
+    timeout: 20000,
+    maxBuffer: 20 * 1024 * 1024,
+  });
+  const pages = JSON.parse(raw || '[]');
+  if (!Array.isArray(pages)) return [];
+  const flattened: T[] = [];
+  for (const page of pages) {
+    if (Array.isArray(page)) flattened.push(...page as T[]);
+  }
+  return flattened;
+}
+
+function encodeGitHubContentPath(filePath: string): string {
+  return filePath.split('/').map(seg => encodeURIComponent(seg)).join('/');
+}
+
+function isSafeRepoFullName(value: string | undefined): value is string {
+  return !!value && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value);
+}
+
+function isSafeGitObjectId(value: string | undefined): value is string {
+  return !!value && /^[0-9a-f]{40}$/i.test(value);
+}
+
+function isBinaryBuffer(buf: Buffer): boolean {
+  if (buf.includes(0)) return true;
+  try {
+    new TextDecoder('utf-8', { fatal: true }).decode(buf);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+function readGitHubFileText(
+  cwd: string,
+  repoFullName: string,
+  filePath: string,
+  ref: string,
+): { content: string; missing: boolean; isBinary: boolean; isTooLarge: boolean } {
+  const endpoint = `repos/${repoFullName}/contents/${encodeGitHubContentPath(filePath)}?ref=${encodeURIComponent(ref)}`;
+  try {
+    const buf = execFileSync('gh', ['api', '-H', 'Accept: application/vnd.github.raw', endpoint], {
+      cwd,
+      timeout: 20000,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    if (buf.length > 2 * 1024 * 1024) {
+      return { content: '', missing: false, isBinary: false, isTooLarge: true };
+    }
+    if (isBinaryBuffer(buf)) {
+      return { content: '', missing: false, isBinary: true, isTooLarge: false };
+    }
+    return {
+      content: new TextDecoder('utf-8', { fatal: true }).decode(buf),
+      missing: false,
+      isBinary: false,
+      isTooLarge: false,
+    };
+  } catch (err) {
+    const { flags, message } = classifyGhError(err);
+    if (flags.notFound) {
+      return { content: '', missing: true, isBinary: false, isTooLarge: false };
+    }
+    if (message.toLowerCase().includes('maxbuffer')) {
+      return { content: '', missing: false, isBinary: false, isTooLarge: true };
+    }
+    throw err;
+  }
+}
+
 export type GatewayOptions = {
   config: Config;
   socketPath?: string;
@@ -5324,7 +5465,6 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           if (!repoRoot) return { id, error: 'path required' };
           const resolved = resolve(repoRoot);
           try {
-            const { execFileSync } = await import('node:child_process');
             const raw = execFileSync('gh', [
               'pr', 'list', '--state', 'open', '--author', '@me',
               '--json', 'number,title,headRefName,baseRefName,state,isDraft,additions,deletions,changedFiles,url,createdAt,updatedAt',
@@ -5334,15 +5474,155 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
             if (!Array.isArray(prs)) return { id, error: 'unexpected gh output' };
             return { id, result: { prs } };
           } catch (err) {
-            if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-              return { id, result: { prs: [], ghMissing: true } };
-            }
-            const msg = err instanceof Error ? err.message : String(err);
-            // gh auth or connectivity issues: return empty with a hint rather than a raw error
-            if (msg.includes('auth') || msg.includes('login') || msg.includes('token')) {
-              return { id, result: { prs: [], ghAuthError: true } };
-            }
-            return { id, error: msg };
+            const { flags, message } = classifyGhError(err);
+            if (Object.keys(flags).length > 0) return { id, result: { prs: [], ...flags } };
+            return { id, error: message };
+          }
+        }
+
+        case 'git.prView': {
+          const repoRoot = params?.path as string;
+          const prNumber = Number(params?.number);
+          if (!repoRoot || !Number.isInteger(prNumber) || prNumber <= 0) {
+            return { id, error: 'path and a positive integer number required' };
+          }
+          const resolved = resolve(repoRoot);
+          try {
+            const repoFullName = getGhRepoNameWithOwner(resolved);
+            const pull = ghApiJson<any>(resolved, `repos/${repoFullName}/pulls/${prNumber}`);
+            const pr = JSON.parse(execFileSync('gh', [
+              'pr', 'view', String(prNumber),
+              '--json',
+              [
+                'number',
+                'title',
+                'body',
+                'author',
+                'state',
+                'isDraft',
+                'headRefName',
+                'headRefOid',
+                'baseRefName',
+                'baseRefOid',
+                'additions',
+                'deletions',
+                'changedFiles',
+                'url',
+                'createdAt',
+                'updatedAt',
+                'mergedAt',
+                'closedAt',
+                'labels',
+                'reviewDecision',
+                'statusCheckRollup',
+                'mergeable',
+                'mergeStateStatus',
+              ].join(','),
+            ], {
+              cwd: resolved,
+              encoding: 'utf-8',
+              timeout: 20000,
+              maxBuffer: 20 * 1024 * 1024,
+            }) || '{}');
+
+            const files = ghApiPaginatedArray<{
+              filename: string;
+              status?: string;
+              previous_filename?: string;
+              additions?: number;
+              deletions?: number;
+              changes?: number;
+              patch?: string;
+            }>(resolved, `repos/${repoFullName}/pulls/${prNumber}/files?per_page=100`).map((file) => ({
+              path: file.filename,
+              status: file.status || 'modified',
+              previousFilename: file.previous_filename || null,
+              additions: Number(file.additions) || 0,
+              deletions: Number(file.deletions) || 0,
+              changes: Number(file.changes) || 0,
+              binary: !file.patch && (Number(file.changes) || 0) > 0,
+            }));
+
+            return {
+              id,
+              result: {
+                pr: {
+                  ...pr,
+                  baseRepoFullName: pull?.base?.repo?.full_name || repoFullName,
+                  headRepoFullName: pull?.head?.repo?.full_name || pull?.base?.repo?.full_name || repoFullName,
+                  files,
+                },
+              },
+            };
+          } catch (err) {
+            const { flags, message } = classifyGhError(err);
+            if (Object.keys(flags).length > 0) return { id, result: { pr: null, ...flags } };
+            return { id, error: message };
+          }
+        }
+
+        case 'git.prComments': {
+          const repoRoot = params?.path as string;
+          const prNumber = Number(params?.number);
+          if (!repoRoot || !Number.isInteger(prNumber) || prNumber <= 0) {
+            return { id, error: 'path and a positive integer number required' };
+          }
+          const resolved = resolve(repoRoot);
+          try {
+            const repoFullName = getGhRepoNameWithOwner(resolved);
+            const issueComments = ghApiPaginatedArray<any>(resolved, `repos/${repoFullName}/issues/${prNumber}/comments?per_page=100`);
+            const reviewComments = ghApiPaginatedArray<any>(resolved, `repos/${repoFullName}/pulls/${prNumber}/comments?per_page=100`);
+            const reviews = ghApiPaginatedArray<any>(resolved, `repos/${repoFullName}/pulls/${prNumber}/reviews?per_page=100`);
+
+            const timeline = [
+              ...issueComments.map((comment) => ({
+                id: `issue:${comment.id}`,
+                kind: 'comment',
+                author: comment.user?.login || 'unknown',
+                authorAssociation: comment.author_association || '',
+                body: comment.body || '',
+                createdAt: comment.created_at,
+                updatedAt: comment.updated_at,
+                url: comment.html_url || '',
+                path: null,
+                line: null,
+                reviewState: null,
+              })),
+              ...reviews.map((review) => ({
+                id: `review:${review.id}`,
+                kind: 'review',
+                author: review.user?.login || 'unknown',
+                authorAssociation: review.author_association || '',
+                body: review.body || '',
+                createdAt: review.submitted_at || review.created_at,
+                updatedAt: review.submitted_at || review.updated_at || review.created_at,
+                url: review.html_url || '',
+                path: null,
+                line: null,
+                reviewState: review.state || null,
+              })),
+              ...reviewComments.map((comment) => ({
+                id: `review-comment:${comment.id}`,
+                kind: 'reviewComment',
+                author: comment.user?.login || 'unknown',
+                authorAssociation: comment.author_association || '',
+                body: comment.body || '',
+                createdAt: comment.created_at,
+                updatedAt: comment.updated_at,
+                url: comment.html_url || '',
+                path: comment.path || null,
+                line: comment.line ?? comment.original_line ?? null,
+                reviewState: null,
+              })),
+            ]
+              .filter(item => item.createdAt)
+              .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+            return { id, result: { timeline } };
+          } catch (err) {
+            const { flags, message } = classifyGhError(err);
+            if (Object.keys(flags).length > 0) return { id, result: { timeline: [], ...flags } };
+            return { id, error: message };
           }
         }
 
@@ -5352,21 +5632,101 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           if (!repoRoot || !Number.isInteger(prNumber) || prNumber <= 0) return { id, error: 'path and a positive integer number required' };
           const resolved = resolve(repoRoot);
           try {
-            const { execFileSync } = await import('node:child_process');
-            const statRaw = execFileSync('gh', [
-              'pr', 'view', String(prNumber),
-              '--json', 'files',
-            ], { cwd: resolved, encoding: 'utf-8', timeout: 15000 });
-            const statData = JSON.parse(statRaw || '{}');
-            const rawFiles = Array.isArray(statData.files) ? statData.files : [];
-            const files = rawFiles.map((f: { path: string; additions: number; deletions: number }) => ({
-              path: f.path,
-              additions: f.additions || 0,
-              deletions: f.deletions || 0,
+            const repoFullName = getGhRepoNameWithOwner(resolved);
+            const files = ghApiPaginatedArray<{
+              filename: string;
+              status?: string;
+              previous_filename?: string;
+              additions?: number;
+              deletions?: number;
+              changes?: number;
+              patch?: string;
+            }>(resolved, `repos/${repoFullName}/pulls/${prNumber}/files?per_page=100`).map((file) => ({
+              path: file.filename,
+              status: file.status || 'modified',
+              previousFilename: file.previous_filename || null,
+              additions: Number(file.additions) || 0,
+              deletions: Number(file.deletions) || 0,
+              binary: !file.patch && (Number(file.changes) || 0) > 0,
             }));
             return { id, result: { files } };
           } catch (err) {
-            return { id, error: err instanceof Error ? err.message : String(err) };
+            const { flags, message } = classifyGhError(err);
+            if (Object.keys(flags).length > 0) return { id, result: { files: [], ...flags } };
+            return { id, error: message };
+          }
+        }
+
+        case 'git.prFileDiff': {
+          const repoRoot = params?.path as string;
+          const prNumber = Number(params?.number);
+          const filePath = params?.file as string;
+          const status = params?.status as string | undefined;
+          const previousFilename = params?.previousFilename as string | null | undefined;
+          const baseRepoFullName = params?.baseRepoFullName as string | undefined;
+          const headRepoFullName = params?.headRepoFullName as string | undefined;
+          const baseRefOid = params?.baseRefOid as string | undefined;
+          const headRefOid = params?.headRefOid as string | undefined;
+          if (!repoRoot || !filePath || !Number.isInteger(prNumber) || prNumber <= 0) {
+            return { id, error: 'path, file, and a positive integer number required' };
+          }
+          const resolved = resolve(repoRoot);
+          if (!pathResolve(resolved, filePath).startsWith(resolved)) {
+            return { id, error: 'path traversal not allowed' };
+          }
+          if (previousFilename && !pathResolve(resolved, previousFilename).startsWith(resolved)) {
+            return { id, error: 'path traversal not allowed' };
+          }
+          try {
+            if (!isSafeRepoFullName(baseRepoFullName) || !isSafeRepoFullName(headRepoFullName)) {
+              return { id, error: 'invalid repo metadata' };
+            }
+            if (!isSafeGitObjectId(baseRefOid) || !isSafeGitObjectId(headRefOid)) {
+              return { id, error: 'invalid git object id' };
+            }
+
+            const normalizedStatus = typeof status === 'string' ? status : 'modified';
+            const oldPath = normalizedStatus === 'renamed' && previousFilename ? previousFilename : filePath;
+            const newPath = filePath;
+
+            let oldContent = '';
+            let newContent = '';
+            let isBinary = false;
+            let isTooLarge = false;
+
+            if (normalizedStatus !== 'added') {
+              const oldFile = readGitHubFileText(resolved, baseRepoFullName, oldPath, baseRefOid);
+              oldContent = oldFile.content;
+              isBinary = isBinary || oldFile.isBinary;
+              isTooLarge = isTooLarge || oldFile.isTooLarge;
+            }
+            if (normalizedStatus !== 'removed') {
+              const newFile = readGitHubFileText(resolved, headRepoFullName, newPath, headRefOid);
+              newContent = newFile.content;
+              isBinary = isBinary || newFile.isBinary;
+              isTooLarge = isTooLarge || newFile.isTooLarge;
+            }
+
+            if (isBinary || isTooLarge) {
+              oldContent = '';
+              newContent = '';
+            }
+
+            return {
+              id,
+              result: {
+                oldContent,
+                newContent,
+                status: normalizedStatus,
+                previousFilename,
+                isBinary,
+                isTooLarge,
+              },
+            };
+          } catch (err) {
+            const { flags, message } = classifyGhError(err);
+            if (Object.keys(flags).length > 0) return { id, result: { oldContent: '', newContent: '', ...flags } };
+            return { id, error: message };
           }
         }
 

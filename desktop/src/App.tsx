@@ -1590,6 +1590,7 @@ export default function App() {
                   connected={gw.connectionState === 'connected' || gw.connectionState === 'degraded'}
                   onFileClick={(path) => tabState.openFileTab(path)}
                   onOpenDiff={(opts) => tabState.openDiffTab(opts)}
+                  onOpenPr={(repoRoot, prNumber, title) => tabState.openPrTab(repoRoot, prNumber, title)}
                   onFileChange={gw.onFileChange}
                   onOpenTerminal={(cwd) => tabState.openTerminalTab(cwd)}
                   mode={sidebarView as 'files' | 'git'}
